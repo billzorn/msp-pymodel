@@ -77,9 +77,9 @@ def mk_write16(write8):
 
 class Model(object):
     def __init__(self):
-        self.regs = [0 for _ in xrange(reg_size)]
-        self.ram = [0 for _ in xrange(ram_size)]
-        self.fram = [0 for _ in xrange(fram_size)]
+        self.regs = [0 for _ in range(reg_size)]
+        self.ram = [0 for _ in range(ram_size)]
+        self.fram = [0 for _ in range(fram_size)]
 
         self.readreg = mk_readreg(self.regs) 
         self.writereg = mk_writereg(self.regs)

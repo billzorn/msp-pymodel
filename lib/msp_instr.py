@@ -1,5 +1,6 @@
 # msp430 instruction representation
 
+import utils
 import msp_base as base
 import msp_fr5969_model as model
 
@@ -14,7 +15,7 @@ def field_to_bits(bitrange):
 def set_bitval(bits, firstbit, lastbit, bitval, checkprev = False, preval = None):
     assert(0 <= firstbit and firstbit <= lastbit and lastbit < len(bits))
     assert(bitval < 2**(lastbit - firstbit + 1))
-    for i in xrange(firstbit, lastbit + 1):
+    for i in range(firstbit, lastbit + 1):
         if checkprev: 
             assert(bits[i] == preval)
         bits[i] = (bitval >> (i-firstbit)) & 1
@@ -22,7 +23,7 @@ def set_bitval(bits, firstbit, lastbit, bitval, checkprev = False, preval = None
 def mk_checkbits(bits):
     def checkbits(word):
         assert word >= 0 and word < 2 ** len(bits)
-        for i in xrange(len(bits)):
+        for i in range(len(bits)):
             if isinstance(bits[i], int):
                 if not bits[i] == (word >> i) & 1:
                     return False
@@ -153,20 +154,20 @@ class Instr(object):
         self.dmode = dmode
         self.fmt = fmt
         self.length = length
-        self.bits = [None for _ in xrange(instr_bits)]
+        self.bits = [None for _ in range(instr_bits)]
         self.fields = fields
 
         for f in self.fields:
             (firstbit, lastbit) = self.fields[f]
             assert(0 <= firstbit and firstbit <= lastbit and lastbit < instr_bits)
-            for i in xrange(firstbit, lastbit + 1):
+            for i in range(firstbit, lastbit + 1):
                 assert(self.bits[i] is None)
                 self.bits[i] = f
 
         (opc_firstbit, opc_lastbit) = fields['opc']
         if verbosity >= 3:
             print('assigning opc bits')
-            base.explain_bitval(opc_firstbit, opc_lastbit, opc)
+            utils.explain_bitval(opc_firstbit, opc_lastbit, opc)
         set_bitval(self.bits, opc_firstbit, opc_lastbit, opc, 
                    checkprev=True, preval='opc')
 
@@ -184,7 +185,7 @@ class Instr(object):
     def tohex(self, fields = {}):
         # could add specially named extension fields for multiword encodings
         word = 0
-        for i in xrange(len(self.bits)):
+        for i in range(len(self.bits)):
             if self.bits[i] == 1 or self.bits[i] == 0:
                 word = word | self.bits[i] << i
             elif self.bits[i] in fields and self.bits[i] in self.fields:

@@ -1,6 +1,6 @@
 # msp430 shared addressing logic
 
-import msp_base as base
+import utils
 import msp_fr5969_model as model
 import msp_instr as instr
 
@@ -45,7 +45,7 @@ def setup_bits(ins, a_bitval, a_field, r_bitval, r_field, verbosity):
     (a_firstbit, a_lastbit) = ins.fields[a_field]
     if verbosity >= 3:
         print('assigning {:s} bits'.format(a_field))
-        base.explain_bitval(a_firstbit, a_lastbit, a_bitval)
+        utils.explain_bitval(a_firstbit, a_lastbit, a_bitval)
     instr.set_bitval(ins.bits, a_firstbit, a_lastbit, a_bitval,
                      checkprev=True, preval=a_field)
 
@@ -53,7 +53,7 @@ def setup_bits(ins, a_bitval, a_field, r_bitval, r_field, verbosity):
         (r_firstbit, r_lastbit) = ins.fields[r_field]
         if verbosity >= 3:
             print('assigning {:s} bits'.format(r_field))
-            base.explain_bitval(r_firstbit, r_lastbit, r_bitval)
+            utils.explain_bitval(r_firstbit, r_lastbit, r_bitval)
         instr.set_bitval(ins.bits, r_firstbit, r_lastbit, r_bitval,
                          checkprev=True, preval=r_field)
     
@@ -139,4 +139,3 @@ def compute_and_read_addr(suffix, state, fields, offset = 0, offset_key = None):
     fields[aname] = instr.mask_bw(fields[iname] + offset + k_offset, fields['bw'])
     fields[name] = instr.read_bw(state, fields[aname], fields['bw'])
     return idx
-

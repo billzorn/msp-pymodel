@@ -127,14 +127,14 @@ def execute_arith(fields, arith_fn, vbit_fn,
 def from_bcd(x, bits):
     assert(bits % 4 == 0)
     v = 0
-    for i in xrange(0, bits, 4):
+    for i in range(0, bits, 4):
         v += ((x >> i) & 0xf) * 10
     return v
 
 def to_bcd(x, bits):
     assert(bits % 4 == 0)
     v = 0
-    for i in xrange(0, bits / 4):
+    for i in range(0, bits / 4):
         v |= ((x / (10**i)) % 10) << (i * 4)
     return v
 

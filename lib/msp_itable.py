@@ -1,6 +1,6 @@
 # msp430 instruction table
 
-import msp_base as base
+import utils
 import msp_instr as instr
 import msp_addr as addr
 import msp_fmt1
@@ -136,7 +136,7 @@ def create_jump(name, verbosity = 0):
     (cond_firstbit, cond_lastbit) = jump['fields']['cond']
     if verbosity >= 3:
         print('assigning cond bits')
-        base.explain_bitval(cond_firstbit, cond_lastbit, cond)
+        utils.explain_bitval(cond_firstbit, cond_lastbit, cond)
     instr.set_bitval(ins.bits, cond_firstbit, cond_lastbit, cond,
                      checkprev=True, preval='cond')
 
