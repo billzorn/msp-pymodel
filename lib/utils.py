@@ -1,6 +1,9 @@
 # handy things
 
 import shutil
+import re
+
+unprintable_re = re.compile(r'[^0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!"#$%&\'()*+,-./:;<=>?@[\\\]^_`{|}~ ]')
 
 def explain_bitval(firstbit, lastbit, bitval, bits = 16):
     print('({:d}, {:d}) : {:d} [{:d}]'.format(firstbit, lastbit, bitval, bits))
