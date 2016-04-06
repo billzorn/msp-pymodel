@@ -20,64 +20,7 @@ resetvec = 0xfffe
 reg_bitmask = (2 ** reg_bits) - 1
 mem_bitmask = (2 ** mem_bits) - 1
 
-import re
 import utils
-
-def mspdump_describe_regs(regs):
-    regstr = '( PC: {:05x}) ( R4: {:05x}) ( R8: {:05x}) (R12: {:05x})\n'.format(
-        regs[0], regs[4], regs[8], regs[12])
-    regstr += '( SP: {:05x}) ( R5: {:05x}) ( R9: {:05x}) (R13: {:05x})\n'.format(
-        regs[1], regs[5], regs[9], regs[13])
-    regstr += '( SR: {:05x}) ( R6: {:05x}) (R10: {:05x}) (R14: {:05x})\n'.format(
-        regs[2], regs[6], regs[10], regs[14])
-    regstr += '( R3: {:05x}) ( R7: {:05x}) (R11: {:05x}) (R15: {:05x})'.format(
-        regs[3], regs[7], regs[11], regs[15])
-    return regstr
-
-def mspdump_describe_memory_row(mem, addr, idx, cols = 16):
-    used_cols = min(cols, len(mem) - idx)
-    unused_cols = cols - used_cols
-    bin_fmt = '{:05x}:' + (' {:02x}' * used_cols) + ('   ' * unused_cols)
-    str_fmt = ('{:s}' * used_cols) + (' ' * unused_cols)
-    row_values = mem[idx:idx+used_cols]
-
-    return (bin_fmt.format(addr + idx, *row_values) + ' |' +
-            re.sub(utils.unprintable_re, '.', str_fmt.format(*map(chr, row_values))) + '|')
-
-def mspdump_describe_memory(mem, addr, cols = 16):
-    memstr = ''
-    for idx in range(0, len(mem), cols):
-        memstr += mspdump_describe_memory_row(mem, addr, idx, cols = cols)
-        if idx < len(mem) - cols:
-            memstr += '\n'
-    return memstr
-
-def mspdump_describe_interesting_memory(mem, addr, fill = [0xff], cols=16):
-    memstr = ''
-    boring_row = fill * (cols // len(fill))
-    if len(boring_row) < cols:
-        boring_row += fill
-    if len(boring_row) > cols:
-        boring_row = boring_row[:cols]
-    fill_description = '[' + (' {:02x}' * len(fill)).format(*fill) + ' ]'
-           
-    boring_count = 0
-    for idx in range(0, len(mem), cols):
-        used_cols = min(cols, len(mem) - idx)
-        unused_cols = cols - used_cols
-        row_values = mem[idx:idx+used_cols]
-        if row_values == boring_row:
-            boring_count += 1
-        else:
-            if boring_count > 0:
-                memstr += '{:s} for {:d} bytes ({:d} rows)\n'.format(fill_description, boring_count * cols, boring_count)
-                boring_count = 0
-            memstr += mspdump_describe_memory_row(mem, addr, idx, cols = cols)
-            if idx < len(mem) - cols:
-                memstr += '\n'
-    if boring_count > 0:
-        memstr += '{:s} for {:d} bytes ({:d} rows)'.format(fill_description, boring_count * cols, boring_count)
-    return memstr
 
 def mk_readreg(regs):
     def readreg(r):
@@ -144,10 +87,30 @@ class Model(object):
 
     def dump(self):
         print(repr(self))
+
         print('-- registers --')
-        print(mspdump_describe_regs(self.regs))
+        print(utils.describe_regs(self.regs))
+
         print('-- ram --')
-        print(mspdump_describe_interesting_memory(self.ram, ram_start, fill = [0xff, 0x3f]))
+        ramidump = utils.describe_interesting_memory(self.ram, ram_start, fill=[0xff, 0x3f])
+        ramdump = utils.describe_memory(self.ram, ram_start)
+        assert(ramidump == utils.summarize_interesting(ramdump, fill=[0xff, 0x3f]))
+        print(ramidump)
+
         print('-- fram --')
-        print(mspdump_describe_interesting_memory(self.fram, fram_start, fill = [0xff]))
+        framidump = utils.describe_interesting_memory(self.fram, fram_start, fill=[0xff])
+        framdump = utils.describe_memory(self.fram, fram_start)
+        assert(framidump == utils.summarize_interesting(framdump, fill=[0xff]))
+        print(framidump)
+
         print('')
+
+    def segments(self):
+        return (utils.interesting_regions(self.ram, ram_start, fill=[0xff, 0x3f], align=8) +
+                utils.interesting_regions(self.fram, fram_start, fill=[0xff], align=8))
+
+    def entry(self):
+        return mk_read16(self.read8)(resetvec)
+
+    def registers(self):
+        return [self.readreg(i) for i in range(len(self.regs))]
