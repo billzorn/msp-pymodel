@@ -136,6 +136,6 @@ def compute_and_read_addr(suffix, state, fields, offset = 0, offset_key = None):
         k_offset = 0
     else:
         k_offset = fields[offset_key]
-    fields[aname] = instr.mask_bw(fields[iname] + offset + k_offset, fields['bw'])
-    fields[name] = instr.read_bw(state, fields[aname], fields['bw'])
+    fields[aname] = mask_bw(fields[iname] + offset + k_offset, fields['bw'])
+    fields[name] = read_bw(state, fields[aname], fields['bw'])
     return idx

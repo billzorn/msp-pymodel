@@ -36,7 +36,7 @@ def pcadd(pc, x):
     return (pc + x) & pc_bitmask
 
 def pcidx(pc, old_pc):
-    return (pc - old_pc) / 2
+    return (pc - old_pc) // 2
 
 def regadd(r, x):
     return (r + x) & model.reg_bitmask
@@ -61,7 +61,7 @@ def wordlabel(i):
 def read_another_word(state, fields):
     pc = fields['pc']
     idx = pcidx(pc, fields['old_pc'])
-    word = mk_read16(state.read8)(pc)
+    word = model.mk_read16(state.read8)(pc)
     fields['pc'] = pcadd(pc, 2)
     fields[wordlabel(idx)] = word
     return idx
