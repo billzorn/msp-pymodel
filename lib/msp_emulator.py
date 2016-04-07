@@ -34,6 +34,23 @@ class Emulator(object):
         self.load(fname)
         self.reset()
 
+    def mw(self, addr, pattern):
+        for i in range(len(pattern)):
+            self.state.write8(addr + i, pattern[i])
+
+    def fill(self, addr, size, pattern):
+        for i in range(size):
+            self.state.write8(addr + i, pattern[i%len(pattern)])
+
+    def setreg(self, register, value):
+        self.state.writereg(register, value)
+
+    def md(self, addr, size):
+        return [self.state.read8(i) for i in range(addr, addr+size)]
+
+    def regs(self):
+        return [self.state.readreg(i) for i in range(len(self.state.regs))]
+
     def step(self):
         pc = self.state.readreg(0)
         word = model.mk_read16(self.state.read8)(pc)

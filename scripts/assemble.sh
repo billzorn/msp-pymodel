@@ -19,9 +19,9 @@ SCRATCH="$DIR/scratch"
 ELFPATH="$SCRATCH/assembled.elf"
 ASMPATH="$SCRATCH/assembled.asm"
 
-$DIR/assemble.sh $SPATH
+MSPTOOLS="/home/bill/private/tools/msp430-gcc-linux32"
+MSPGCC="$MSPTOOLS/bin/msp430-elf-gcc -nostdlib -T$MSPTOOLS/include/msp430fr5969.ld"
+MSPOBJDUMP="$MSPTOOLS/bin/msp430-elf-objdump"
 
-MSPINIT="$SCRATCH/sloaded.mspdebug"
-echo "prog $ELFPATH" > $MSPINIT
-
-rlwrap mspdebug tilib -q -C $MSPINIT
+$MSPGCC $SPATH -o $ELFPATH
+$MSPOBJDUMP -D $ELFPATH > $ASMPATH

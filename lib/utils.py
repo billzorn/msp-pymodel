@@ -32,7 +32,7 @@ def interesting_regions(mem, addr, fill = [0x0], align = 8):
 unprintable_re = re.compile(r'[^0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!"#$%&\'()*+,-./:;<=>?@[\\\]^_`{|}~ ]')
 
 def describe_regs(regs):
-    regstr = '( PC: {:05x}) ( R4: {:05x}) ( R8: {:05x}) (R12: {:05x})\n'.format(
+    regstr  = '( PC: {:05x}) ( R4: {:05x}) ( R8: {:05x}) (R12: {:05x})\n'.format(
         regs[0], regs[4], regs[8], regs[12])
     regstr += '( SP: {:05x}) ( R5: {:05x}) ( R9: {:05x}) (R13: {:05x})\n'.format(
         regs[1], regs[5], regs[9], regs[13])
@@ -42,7 +42,18 @@ def describe_regs(regs):
         regs[3], regs[7], regs[11], regs[15])
     return regstr
 
-# will probably also add a parser that goes the other direction
+def parse_regs(dump):
+    lines = dump.strip().split('\n')
+    if len(lines) < 4:
+        raise ValueError('register dump too short:\n' + dump)
+    lines = lines[:4]
+    regvals = []
+    for line in lines:
+        valstrs = re.findall(r'\([^()]*:[^()]*\)', line)
+        regvals += map(lambda v: int(v[1:-1].split(':')[1].strip(), 16), valstrs)
+    # need to shuffle to fix the ordering
+    return [regvals[i * 4 + j] for j in range(0, 4) for i in range(0, 4)]
+
 def describe_memory_row(mem, addr, idx, cols = 16):
     used_cols = min(cols, len(mem) - idx)
     unused_cols = cols - used_cols
@@ -53,6 +64,18 @@ def describe_memory_row(mem, addr, idx, cols = 16):
     return (bin_fmt.format(addr + idx, *row_values) + ' |' +
             re.sub(unprintable_re, '.', str_fmt.format(*map(chr, row_values))) + '|')
 
+def parse_memory_row(line):
+    try:
+        bin_formatted = line.split('|')[0]
+        addr_bytes = bin_formatted.split(':') 
+        addr_str = addr_bytes[0].strip()
+        bytes_str = addr_bytes[1].strip()
+        addr_value = int(addr_str, 16)
+        row_values = [int(s, 16) for s in bytes_str.split()]
+        return addr_value, row_values
+    except:
+        return 0, []
+
 def describe_memory(mem, addr, cols = 16):
     memstr = ''
     for idx in range(0, len(mem), cols):
@@ -60,6 +83,11 @@ def describe_memory(mem, addr, cols = 16):
         if idx < len(mem) - cols:
             memstr += '\n'
     return memstr
+
+# simple parser, assumes a single region
+def parse_memory(dump):
+    lines = dump.strip().split('\n')
+    return [b for addr, row in map(parse_memory_row, lines) for b in row]
 
 def describe_interesting_memory(mem, addr, fill = [0xff], cols=16):
     memstr = ''
@@ -91,12 +119,7 @@ def summarize_interesting(description, fill = [0xff], cols=16):
     description_lines = description.split('\n')
     for i in range(len(description_lines)):
         line = description_lines[i]
-        try:
-            bin_formatted = line.split('|')[0]
-            bytes_str = bin_formatted.split(':')[1].strip()
-            row_values = [int(s, 16) for s in bytes_str.split()]
-        except Exception:
-            row_values = None
+        _, row_values = parse_memory_row(line)
         if row_values == boring_row:
             boring_count += 1
         else:
@@ -109,6 +132,76 @@ def summarize_interesting(description, fill = [0xff], cols=16):
     if boring_count > 0:
         summary += '{:s} for {:d} bytes ({:d} rows)'.format(fill_description, boring_count * cols, boring_count)
     return summary
+
+# lel
+def summarize_triple(description, cols=16):
+    summary = summarize_interesting(description, fill=[0], cols=cols)
+    summary = summarize_interesting(summary, fill=[0xff], cols=cols)
+    summary = summarize_interesting(summary, fill=[0xff, 0x3f], cols=cols)
+    return summary
+def triple_summarize(mem, addr, cols=16):
+    description = describe_interesting_memory(mem, addr, fill=[0], cols=cols)
+    description = summarize_interesting(description, fill=[0xff], cols=cols)
+    description = summarize_interesting(description, fill=[0xff, 0x3f], cols=cols)
+    return description
+
+def regions_equal(mems):
+    for i in range(0, len(mems)):
+        for j in range(i, len(mems)):
+            if mems[i] != mems[j]:
+                return False
+    return True
+
+def diff_memory(mems, addr, align = 8):
+    longest = max(map(len, mems))
+
+    chunks = {}
+    prev_addr = addr
+    prev_regions = []
+
+    for idx in range(0, longest, align):
+        regions = [mem[idx:idx+align] for mem in mems]
+        if regions_equal(mems):
+            if len(prev_regions) > 0:
+                merged_regions = prev_regions[0][:]
+                for i in range(1, len(prev_regions)):
+                    for mem_idx in range(len(merged_regions)):
+                        merged_regions[mem_idx] += prev_regions[i][mem_idx]
+                chunks[prev_addr] = merged_regions
+                prev_regions = []
+            prev_addr = addr + idx
+        else:
+            prev_regions.append(regions)
+
+    if len(prev_regions) > 0:
+        merged_regions = prev_regions[0][:]
+        for i in range(1, len(prev_regions)):
+            for mem_idx in range(len(merged_regions)):
+                merged_regions[mem_idx] += prev_regions[i][mem_idx]
+        chunks[prev_addr] = merged_regions
+
+    return chunks
+
+def explain_diff(diff):
+    for addr in sorted(map(str, diff)):
+        if addr == 'regs':
+            try:
+                regdiff = diff['regs'][0]
+                for i in range(len(regdiff)):
+                    print('-- driver {:d} registers --'.format(i))
+                    print(describe_regs(regdiff[i]))
+                print('')
+            except Exception as e:
+                print(e)
+                print('nonstandard regdiff?')
+                print_dict(diff['regs'])
+                print('')
+        else:
+            addr = int(addr)
+            regions = diff[addr]
+            for i in range(len(regions)):
+                print('-- driver {:d} --'.format(i))
+                print(triple_summarize(regions[i], addr))
 
 def explain_bitval(firstbit, lastbit, bitval, bits = 16):
     print('({:d}, {:d}) : {:d} [{:d}]'.format(firstbit, lastbit, bitval, bits))

@@ -85,25 +85,30 @@ class Model(object):
         self.read8 = mk_read8(self.ram, self.fram)
         self.write8 = mk_write8(self.ram, self.fram)
 
-    def dump(self):
+    def dump(self, check=True):
         print(repr(self))
 
         print('-- registers --')
-        print(utils.describe_regs(self.regs))
+        if check:
+            regdump = utils.describe_regs(self.regs)
+            assert(self.regs == utils.parse_regs(regdump))
+        print(regdump)
 
         print('-- ram --')
         ramidump = utils.describe_interesting_memory(self.ram, ram_start, fill=[0xff, 0x3f])
-        ramdump = utils.describe_memory(self.ram, ram_start)
-        assert(ramidump == utils.summarize_interesting(ramdump, fill=[0xff, 0x3f]))
+        if check:
+            ramdump = utils.describe_memory(self.ram, ram_start)
+            assert(ramidump == utils.summarize_interesting(ramdump, fill=[0xff, 0x3f]))
+            assert(self.ram == utils.parse_memory(ramdump))
         print(ramidump)
 
         print('-- fram --')
         framidump = utils.describe_interesting_memory(self.fram, fram_start, fill=[0xff])
-        framdump = utils.describe_memory(self.fram, fram_start)
-        assert(framidump == utils.summarize_interesting(framdump, fill=[0xff]))
+        if check:
+            framdump = utils.describe_memory(self.fram, fram_start)
+            assert(framidump == utils.summarize_interesting(framdump, fill=[0xff]))
+            assert(self.fram == utils.parse_memory(framdump))
         print(framidump)
-
-        print('')
 
     def segments(self):
         return (utils.interesting_regions(self.ram, ram_start, fill=[0xff, 0x3f], align=8) +
