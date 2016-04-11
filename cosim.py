@@ -4,6 +4,7 @@
 
 import sys
 import os
+import traceback
 
 libdir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib')
 sys.path.append(libdir)
@@ -38,6 +39,120 @@ def prog_and_sync(cosim, master_idx, fname):
         utils.explain_diff(diff)
         cosim.sync(master_idx, diff=diff)
 
+def do_cmd(cosim, master_idx, cmd, args):
+    if cmd in {'reset'}:
+        cosim.reset()
+
+    elif cmd in {'prog', 'p'}:
+        try:
+            fname = args[0]
+            prog_and_sync(cosim, master_idx, fname)
+        except Exception as e:
+            print('prog <ELF>')
+            raise e
+
+    elif cmd in {'mw'}:
+        try:
+            addr = int_or_hex(args[0])
+            pattern = [int_or_hex(s) for s in args[1:]]
+            cosim.mw(addr, pattern)
+        except Exception as e:
+            print('mw <ADDR> <PATTERN>')
+            raise e
+
+    elif cmd in {'fill'}:
+        try:
+            addr = int_or_hex(args[0])
+            size = int_or_hex(args[1])
+            pattern = [int_or_hex(s) for s in args[2:]]
+            cosim.fill(addr, size, pattern)
+        except Exception as e:
+            print('fill <ADDR> <SIZE> <PATTERN>')
+            raise e
+
+    elif cmd in {'set'}:
+        try:
+            register = int_or_hex(args[0])
+            value = int_or_hex(args[1])
+            cosim.setreg(register, value)
+        except Exception as e:
+            print('set <REGISTER> <VALUE>')
+            raise e
+
+    elif cmd in {'md', 'x'}:
+        try:
+            addr = int_or_hex(args[0])
+            size = int_or_hex(args[1])
+            mems, diff = cosim.md(addr, size)
+            if len(diff) == 0:
+                print(utils.triple_summarize(mems[master_idx], addr))
+            else:
+                print('-- master {:d} --'.format(master_idx))
+                print(utils.triple_summarize(mems[master_idx], addr))
+                print('')
+                utils.explain_diff(diff)
+        except Exception as e:
+            print('md <ADDR> <SIZE>')
+            raise e
+
+    elif cmd in {'regs'}:
+        regvals, regdiff = cosim.regs()
+        if len(regdiff) == 0:
+            print(utils.describe_regs(regvals[master_idx]))
+        else:
+            diff = {'regs' : regdiff}
+            utils.explain_diff(diff)
+
+    elif cmd in {'step', 's'}:
+        cosim.step()
+
+    elif cmd in {'run', 'r'}:
+        try:
+            if len(args) >= 1:
+                max_steps = int_or_hex(args[0])
+            else:
+                max_steps = 10000
+            if len(args) >= 2:
+                interval = float(args[1])
+            else:
+                interval = 0.5
+            if len(args) >= 3:
+                passes = int_or_hex(args[2])
+            else:
+                passes = 1
+            cosim.run(max_steps=max_steps, interval=interval, passes=passes)
+        except Exception as e:
+            print('run [MAX_STEPS] [INTERVAL] [PASSES]')
+            raise e
+
+    elif cmd in {'diff'}:
+        diff = cosim.diff()
+        if len(diff) == 0:
+            print('states agree!')
+        else:
+            utils.explain_diff(diff)
+
+    elif cmd in {'sync'}:
+        try:
+            if len(args) >= 1:
+                sync_idx = int_or_hex(args[0])
+            else:
+                sync_idx = master_idx
+            diff = cosim.diff()
+            if len(diff) == 0:
+                print('states agree, not syncing')
+            else:
+                utils.explain_diff(diff)
+                print('syncing drivers to {:d}'.format(sync_idx))
+                cosim.sync(sync_idx, diff)
+
+        except Exception as e:
+            print('sync [SYNC_IDX]')
+            raise e
+
+    else:
+        print('unknown command: {:s}'.format(cmd))
+
 def repl(cosim, master_idx):
     prompt()
     for line in sys.stdin:
@@ -52,118 +167,10 @@ def repl(cosim, master_idx):
             print('exiting')
             break
 
-        elif cmd in {'reset'}:
-            cosim.reset()
-
-        elif cmd in {'prog', 'p'}:
-            try:
-                fname = args[0]
-                prog_and_sync(cosim, master_idx, fname)
-            except Exception as e:
-                print(e)
-                print('prog <ELF>')
-
-        elif cmd in {'mw'}:
-            try:
-                addr = int_or_hex(args[0])
-                pattern = [int_or_hex(s) for s in args[1:]]
-                cosim.mw(addr, pattern)
-            except Exception as e:
-                print(e)
-                print('mw <ADDR> <PATTERN>')
-        
-        elif cmd in {'fill'}:
-            try:
-                addr = int_or_hex(args[0])
-                size = int_or_hex(args[1])
-                pattern = [int_or_hex(s) for s in args[2:]]
-                cosim.fill(addr, size, pattern)
-            except Exception as e:
-                print(e)
-                print('fill <ADDR> <SIZE> <PATTERN>')
-
-        elif cmd in {'set'}:
-            try:
-                register = int_or_hex(args[0])
-                value = int_or_hex(args[1])
-                cosim.setreg(register, value)
-            except Exception as e:
-                print(e)
-                print('set <REGISTER> <VALUE>')
-
-        elif cmd in {'md', 'x'}:
-            try:
-                addr = int_or_hex(args[0])
-                size = int_or_hex(args[1])
-                mems, diff = cosim.md(addr, size)
-                if len(diff) == 0:
-                    print(utils.triple_summarize(mems[master_idx], addr))
-                else:
-                    print('-- master {:d} --'.format(master_idx))
-                    print(utils.triple_summarize(mems[master_idx], addr))
-                    print('')
-                    utils.explain_diff(diff)
-            except Exception as e:
-                print(e)
-                print('md <ADDR> <SIZE>')
-
-        elif cmd in {'regs'}:
-            regvals, regdiff = cosim.regs()
-            if len(regdiff) == 0:
-                print(utils.describe_regs(regvals[master_idx]))
-            else:
-                diff = {'regs' : regdiff}
-                utils.explain_diff(diff)
-
-        elif cmd in {'step', 's'}:
-            cosim.step()
-
-        elif cmd in {'run', 'r'}:
-            try:
-                if len(args) >= 1:
-                    max_steps = int_or_hex(args[0])
-                else:
-                    max_steps = 10000
-                if len(args) >= 2:
-                    interval = float(args[1])
-                else:
-                    interval = 0.5
-                if len(args) >= 3:
-                    passes = int_or_hex(args[2])
-                else:
-                    passes = 1
-                cosim.run(max_steps=max_steps, interval=interval, passes=passes)
-            except Exception as e:
-                print(e)
-                print('run [MAX_STEPS] [INTERVAL] [PASSES]')
-
-        elif cmd in {'diff'}:
-            diff = cosim.diff()
-            if len(diff) == 0:
-                print('states agree!')
-            else:
-                utils.explain_diff(diff)
-
-        elif cmd in {'sync'}:
-            try:
-                if len(args) >= 1:
-                    sync_idx = int_or_hex(args[0])
-                else:
-                    sync_idx = master_idx
-                diff = cosim.diff()
-                if len(diff) == 0:
-                    print('states agree, not syncing')
-                else:
-                    utils.explain_diff(diff)
-                    print('syncing drivers to {:d}'.format(sync_idx))
-                    cosim.sync(sync_idx, diff)
-
-            except Exception as e:
-                print(e)
-                print('sync [SYNC_IDX]')
-        
-        else:
-            print('unknown command: {:s}'.format(cmd))
+        try:
+            do_cmd(cosim, master_idx, cmd, args)
+        except Exception:
+            traceback.print_exc()
 
         prompt()
 

@@ -31,6 +31,7 @@ class Emulator(object):
         elftools.save(self.state, fname, verbosity=self.verbosity)
 
     def prog(self, fname):
+        self.fill(model.fram_start, model.fram_size, [0xff])
         self.load(fname)
         self.reset()
 
