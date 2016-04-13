@@ -1,6 +1,7 @@
 # msp430 isa
 
 import utils
+import msp_base as base
 import msp_instr as instr
 import msp_itable
 
@@ -171,9 +172,6 @@ class ISA(object):
                 smode_map[smode] * len(dmode_map) +
                 dmode_map[dmode] + offset)
 
-    def instr_modes_to_idx(self, ins):
-        return self.modes_to_idx(ins.fmt, ins.name, ins.smode, ins.dmode)
-
     def idx_to_modes(self, idx):
         fmt_idx = 0
         i = idx
@@ -187,12 +185,46 @@ class ISA(object):
                                                len(self.dmode_rmaps[fmt_idx])))
                                           // len(self.dmode_rmaps[fmt_idx])],
                self.dmode_rmaps[fmt_idx][i % len(self.dmode_rmaps[fmt_idx])])
+
+    def modes_to_instr(self, fmt, name, smode, dmode):
+        return self.ids_ins[self.modes_to_idx(fmt, name, smode, dmode)]
+
+    def instr_to_modes(self, ins):
+        return ins.fmt, ins.name, ins.smode, ins.dmode
+
+    def instr_modes_to_idx(self, ins):
+        return self.modes_to_idx(*self.instr_to_modes(ins))
                                             
     def instr_to_idx(self, ins):
         return self.ins_ids[ins]
 
     def idx_to_instr(self, i):
         return self.ids_ins[i]
+
+    # have to figure out how to do extension words, etc
+    def inhabitant(self, ins, fields, check=True):
+        words = [ins.inhabit(fields)]
+        if 'isrc' in fields:
+            words.append(fields['isrc'])
+        if 'idst' in fields:
+            words.append(fields['idst'])
+        if check:
+            decoded_ins = self.decode(words[0])
+            if not decoded_ins is ins:
+                raise ValueError('bad fields: {:s} decoded as {:s}, not {:s}'.format(
+                    repr(fields),
+                    repr(self.instr_to_modes(decoded_ins)),
+                    repr(self.instr_to_modes(ins))))
+            minifields = ins.readfields(base.Ministate(words, iswords=True))
+            if (('isrc' in fields or ('isrc' in minifields and not 'cgsrc' in minifields))
+                and fields['isrc'] != minifields['isrc']):
+                raise ValueError('bad isrc: specified {0:d} ({0:#x}), got {1:d} {1:#x}'.format(
+                    fields['isrc'], minifields['isrc']))
+            if (('idst' in fields or ('idst' in minifields and not 'cgsrc' in minifields))
+                and fields['idst'] != minifields['idst']):
+                raise ValueError('bad idst: specified {0:d} ({0:#x}), got {1:d} {1:#x}'.format(
+                    fields['idst'], minifields['idst']))
+        return words
 
 # canonical object
 # use these instead of creating your own, as instruction equality works

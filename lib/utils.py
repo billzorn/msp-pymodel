@@ -147,7 +147,7 @@ def triple_summarize(mem, addr, cols=16):
 
 def regions_equal(mems):
     for i in range(0, len(mems)):
-        for j in range(i, len(mems)):
+        for j in range(i+1, len(mems)):
             if mems[i] != mems[j]:
                 return False
     return True
@@ -161,7 +161,7 @@ def diff_memory(mems, addr, align = 8):
 
     for idx in range(0, longest, align):
         regions = [mem[idx:idx+align] for mem in mems]
-        if regions_equal(mems):
+        if regions_equal(regions):
             if len(prev_regions) > 0:
                 merged_regions = prev_regions[0][:]
                 for i in range(1, len(prev_regions)):

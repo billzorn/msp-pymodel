@@ -178,6 +178,13 @@ class Instr(object):
                 word |= k << i
         return word
 
+    def live_fields(self):
+        live = set()
+        for b in self.bits:
+            if b in self.fields:
+                live.add(b)
+        return live
+
     def describe(self):
         print('{:s} ({:s}) ({:s})'.format(self.name, self.smode, self.dmode))
         print('  format {:s}, length {:d}'.format(self.fmt, self.length))

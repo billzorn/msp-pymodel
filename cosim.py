@@ -95,7 +95,7 @@ def do_cmd(cosim, master_idx, cmd, args):
             print('md <ADDR> <SIZE>')
             raise e
 
-    elif cmd in {'regs'}:
+    elif cmd in {'regs', 'reg'}:
         regvals, regdiff = cosim.regs()
         if len(regdiff) == 0:
             print(utils.describe_regs(regvals[master_idx]))
