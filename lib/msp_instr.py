@@ -35,9 +35,6 @@ pc_bitmask = model.reg_bitmask & -2
 def pcadd(pc, x):
     return (pc + x) & pc_bitmask
 
-def pcidx(pc, old_pc):
-    return (pc - old_pc) // 2
-
 def regadd(r, x):
     return (r + x) & model.reg_bitmask
 
@@ -54,31 +51,24 @@ def regadd(r, x):
 # Then, writefields writes the new values back to memory, taking the model
 # and dict and presumably using the model's writereg and write8 methods.
 
-# interface for reading and labeling words during decoding
-def wordlabel(i):
-    return 'word_' + str(i)
 # read the next word after the pc, and increment the pc stored in fields
 def read_another_word(state, fields):
     pc = fields['pc']
-    idx = pcidx(pc, fields['old_pc'])
     word = model.mk_read16(state.read8)(pc)
     fields['pc'] = pcadd(pc, 2)
-    fields[wordlabel(idx)] = word
-    return idx
+    fields['words'].append(word)
+    return
 # get pc, sr, word_0, and autoincrement over this pc 
 def decode_base(state):
     pc = state.readreg(0)
     sr = state.readreg(2)
-    fields = {'old_pc':pc, 'pc':pc, 'sr':sr}
-    idx = read_another_word(state, fields)
-    if idx != 0:
-        raise base.RiskySuccess(fields)
-    else:
-        return fields
+    fields = {'old_pc':pc, 'pc':pc, 'sr':sr, 'words':[]}
+    read_another_word(state, fields)
+    return fields
 # decode fields of a given instruction
 def decode_fields(ins, state):
     fields = decode_base(state)
-    word = fields[wordlabel(0)]
+    word = fields['words'][0]
     for f in ins.fields:
         (firstbit, lastbit) = ins.fields[f]
         fields[f] = (word >> firstbit) & (2 ** (lastbit - firstbit + 1) - 1)
@@ -86,8 +76,6 @@ def decode_fields(ins, state):
 # decode and then try to set up constant generator
 def decode_cg(ins, state):
     fields = decode_fields(ins, state)
-    if not ('as' in fields and 'rsrc' in fields):
-        raise base.RiskySuccess(fields)
     f_as = fields['as']
     f_rsrc = fields['rsrc']
     if f_rsrc == 2:
@@ -175,6 +163,20 @@ class Instr(object):
         self.readfields = readfields
         self.execute = execute
         self.writefields = writefields
+
+    def inhabit(self, fields):
+        word = 0
+        for i, k in enumerate(self.bits):
+            if k in self.fields:
+                # bit holds a symbolic key, read from given fields
+                firstbit, lastbit = self.fields[k]
+                fieldval = fields[k]
+                bitval = (fieldval >> (i - firstbit)) & 1
+                word |= bitval << i
+            else:
+                # not a key, so must be a literal bit
+                word |= k << i
+        return word
 
     def describe(self):
         print('{:s} ({:s}) ({:s})'.format(self.name, self.smode, self.dmode))

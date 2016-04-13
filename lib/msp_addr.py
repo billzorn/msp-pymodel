@@ -129,8 +129,8 @@ def compute_and_read_addr(suffix, state, fields, offset = 0, offset_key = None):
     iname = 'i' + suffix
     aname = 'a' + suffix
     name = suffix
-    idx = instr.read_another_word(state, fields)
-    fields[iname] = fields[instr.wordlabel(idx)]
+    instr.read_another_word(state, fields)
+    fields[iname] = fields['words'][-1]
     # the idea is that we only read the fields AFTER we've invoked read_another_word
     if offset_key is None:
         k_offset = 0
@@ -138,4 +138,4 @@ def compute_and_read_addr(suffix, state, fields, offset = 0, offset_key = None):
         k_offset = fields[offset_key]
     fields[aname] = mask_bw(fields[iname] + offset + k_offset, fields['bw'])
     fields[name] = read_bw(state, fields[aname], fields['bw'])
-    return idx
+    return

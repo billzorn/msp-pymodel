@@ -65,8 +65,8 @@ def mk_readfields_src_ai(ins):
 def mk_readfields_src_N(ins):
     def readfields(state):
         fields = instr.decode_fields(ins, state)
-        idx = instr.read_another_word(state, fields)
-        fields['isrc'] = fields[instr.wordlabel(idx)]
+        instr.read_another_word(state, fields)
+        fields['isrc'] = fields['words'][-1]
         fields['src'] = fields['isrc']
         return fields
     return readfields
