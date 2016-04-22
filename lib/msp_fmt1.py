@@ -9,7 +9,13 @@ import msp_arith as arith
 
 def mk_readfields_src_Rn(ins):
     def keepreading(state, fields):
-        fields['src'] = state.readreg(fields['rsrc'])
+        # Reading the PC is weird.
+        # It might actually be cleaner to dynamically write the pc inside readfields? I don't know.
+        rn = fields['rsrc']
+        if rn == 0:
+            fields['src'] = instr.readpc(ins, fields)
+        else:
+            fields['src'] = state.readreg(rn)
         return
     return addr.mk_readfields_cg(ins, keepreading)
 

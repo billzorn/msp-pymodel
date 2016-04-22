@@ -239,7 +239,7 @@ def load(state, fname, restore_regs = True, verbosity = 0):
                 regdata = section['data']
                 r = 0
                 for i in range(0, len(regdata), 4):
-                    regval = struct.unpack('<I', regdata[i:i+4])
+                    regval = struct.unpack('<I', regdata[i:i+4])[0]
                     state.writereg(r, regval)
                     r += 1
 

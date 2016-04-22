@@ -23,7 +23,7 @@ enq_sleeptime = 1.0 / 120.0
 
 # read at 60fps
 default_timeout = 1.0 / 60.0
-default_retries = int(10 / default_timeout)
+default_retries = int(20 / default_timeout)
 
 def enqueue_output(out, queue):
     while True:

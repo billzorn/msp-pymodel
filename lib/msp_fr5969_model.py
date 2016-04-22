@@ -22,40 +22,92 @@ mem_bitmask = (2 ** mem_bits) - 1
 
 import utils
 
-def mk_readreg(regs):
-    def readreg(r):
-        return regs[r]
+def iotrace_init():
+    trace = []
+    iotrace_next(trace)
+    return trace
+
+def iotrace_next(trace):
+    trace.append({'r':{'reg':[], 'mem':[]},
+                  'w':{'reg':[], 'mem':[]}})
+
+def iotrace_append(trace, rw, regmem, addr, value):
+    trace[-1][rw][regmem].append((addr, value))
+
+def mk_readreg(regs, trace = None):
+    if trace is None:
+        def readreg(r):
+            return regs[r]
+    else:
+        def readreg(r):
+            v = regs[r]
+            iotrace_append(trace, 'r', 'reg', r, v)
+            return v
     return readreg
 
-def mk_writereg(regs):
-    def writereg(r, regval):
-        if r != 3:
-            regs[r] = regval
-        return
+def mk_writereg(regs, trace = None):
+    if trace is None:
+        def writereg(r, regval):
+            assert(isinstance(regval, int) and 0 <= regval and regval < 2**reg_bits)
+            if r != 3:
+                regs[r] = regval
+            return
+    else:
+        def writereg(r, regval):
+            assert(isinstance(regval, int) and 0 <= regval and regval < 2**reg_bits)
+            iotrace_append(trace, 'w', 'reg', r, regval)
+            if r != 3:
+                regs[r] = regval
+            return
     return writereg
 
-def mk_read8(ram, fram):
-    def read8(addr):
-        if ram_start <= addr and addr < ram_start + ram_size:
-            return ram[addr - ram_start]
-        elif fram_start <= addr and addr < fram_start + fram_size:
-            return fram[addr - fram_start]
-        else:
-            # what's the right thing to do here?????
-            return 0
+def mk_read8(ram, fram, trace = None):
+    if trace is None:
+        def read8(addr):
+            if ram_start <= addr and addr < ram_start + ram_size:
+                return ram[addr - ram_start]
+            elif fram_start <= addr and addr < fram_start + fram_size:
+                return fram[addr - fram_start]
+            else:
+                # what's the right thing to do here?????
+                return 0
+    else:
+        def read8(addr):
+            if ram_start <= addr and addr < ram_start + ram_size:
+                v = ram[addr - ram_start]
+            elif fram_start <= addr and addr < fram_start + fram_size:
+                v = fram[addr - fram_start]
+            else:
+                # what's the right thing to do here?????
+                v = 0
+            iotrace_append(trace, 'r', 'mem', addr, v)
+            return v
     return read8
 
-def mk_write8(ram, fram):
-    def write8(addr, byte):
-        ####print('writing {:#02x} to address {:#04x}'.format(byte, addr))
-        if ram_start <= addr and addr < ram_start + ram_size:
-            ram[addr - ram_start] = byte
-        elif fram_start <= addr and addr < fram_start + fram_size:
-            fram[addr - fram_start] = byte
-        else:
-            # what's the right thing to do here????
-            print('writing {:#02x} to address {:#04x}'.format(byte, addr))
-            return
+def mk_write8(ram, fram, trace = None):
+    if trace is None:
+        def write8(addr, byte):
+            assert(isinstance(byte, int) and 0 <= byte and byte < 2**mem_bits)
+            if ram_start <= addr and addr < ram_start + ram_size:
+                ram[addr - ram_start] = byte
+            elif fram_start <= addr and addr < fram_start + fram_size:
+                fram[addr - fram_start] = byte
+            else:
+                # what's the right thing to do here????
+                print('writing {:#02x} to address {:#04x}'.format(byte, addr))
+                return
+    else:
+        def write8(addr, byte):
+            assert(isinstance(byte, int) and 0 <= byte and byte < 2**mem_bits)
+            iotrace_append(trace, 'w', 'mem', addr, byte)
+            if ram_start <= addr and addr < ram_start + ram_size:
+                ram[addr - ram_start] = byte
+            elif fram_start <= addr and addr < fram_start + fram_size:
+                fram[addr - fram_start] = byte
+            else:
+                # what's the right thing to do here????
+                print('writing {:#02x} to address {:#04x}'.format(byte, addr))
+                return
     return write8
 
 def mk_read16(read8):
@@ -75,15 +127,15 @@ def mk_write16(write8):
     return write16
 
 class Model(object):
-    def __init__(self):
+    def __init__(self, trace = None):
         self.regs = [0 for _ in range(reg_size)]
         self.ram = [(0xff if i % 2 == 0 else 0x3f) for i in range(ram_size)]
         self.fram = [0xff for _ in range(fram_size)]
 
-        self.readreg = mk_readreg(self.regs) 
-        self.writereg = mk_writereg(self.regs)
-        self.read8 = mk_read8(self.ram, self.fram)
-        self.write8 = mk_write8(self.ram, self.fram)
+        self.readreg = mk_readreg(self.regs, trace=trace) 
+        self.writereg = mk_writereg(self.regs, trace=trace)
+        self.read8 = mk_read8(self.ram, self.fram, trace=trace)
+        self.write8 = mk_write8(self.ram, self.fram, trace=trace)
 
     def dump(self, check=True):
         print(repr(self))

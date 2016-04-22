@@ -99,6 +99,13 @@ def decode_cg(ins, state):
                 fields['cgsrc'] = 0xffff
     return fields
 
+# How to get the pc that an instruction will see when trying to use it as data.
+# The observed behavior if you read the PC is that you get the PC after this instruction
+# is over. We compute this from old_pc and the size of the instruction.
+def readpc(ins, fields):
+    # refer to instruction length symbolically, it might be updated and things
+    return pcadd(fields['old_pc'], ins.length)
+
 # basic actions performed after executing an instruction
 def write_pc_sr(state, fields):
     state.writereg(0, fields['pc'])

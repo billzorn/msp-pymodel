@@ -19,10 +19,10 @@ def sxt_bits(x, bits, extbits):
         return trunc_bits(x | (-1 << bits), extbits)
 
 def twocomp(x, bits):
-    if i & (1 << (bits - 1)) == 0:
-        return i
+    if x & (1 << (bits - 1)) == 0:
+        return x
     else:
-        return i - (1 << bits)    
+        return x - (1 << bits)    
 
 sr_fieldnames = ['c','z','n','gie','cpuoff','oscoff','scg0','scg1','v']
 def unpack_sr(sr):
@@ -40,7 +40,7 @@ def pack_sr(sr_fields):
     for f in sr_fieldnames:
         sr_v |= sr_fields[f] << i
         i += 1
-    sr_v |= sr_fields['reserved']
+    sr_v |= sr_fields['reserved'] << i
     return sr_v
 
 # needs a truncated result

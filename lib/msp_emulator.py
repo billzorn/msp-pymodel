@@ -10,8 +10,15 @@ class Emulator(object):
     def __init__(self, tracing = False, verbosity = 0):
         self.tracing = tracing
         self.trace = []
+        self.iotrace = model.iotrace_init()
+        self.iotrace2 = []
         self.verbosity = verbosity
-        self.state = model.Model()
+
+        if tracing:
+            self.state = model.Model(trace=self.iotrace)
+        else:
+            self.state = model.Model()
+
         if self.verbosity >= 3:
             print('created {:s}'.format(str(self)))
             self.state.dump()
@@ -60,15 +67,30 @@ class Emulator(object):
         if ins is None:
             raise base.ExecuteError('failed to decode {:#04x} ( PC: {:05x})'.format(word, pc))
 
+        # TODO: iotrace should probably work in a reasonable way
+        # right now we have two lists of io traces, one which includes all io, even not
+        # from instruction execution, and a second one in self.iotrace2 which is only
+        # io events from actually executing instructions
+        if self.tracing:
+            model.iotrace_next(self.iotrace)
+
         fields = ins.readfields(self.state)
 
         if self.tracing:
             self.trace.append(fields)
             if self.verbosity >= 2:
+                print('\npc: {:05x}'.format(pc))
+                ins.describe()
                 utils.print_dict(fields)
 
         ins.execute(fields)
         ins.writefields(self.state, fields)
+
+        # remember the thing we just added to our iotrace, and make a dummy to intercept
+        # non-execution IO before the next instruction
+        if self.tracing:
+            self.iotrace2.append(self.iotrace[-1])
+            model.iotrace_next(self.iotrace)
 
         if word == 0x3fff:
             # halt
@@ -83,18 +105,18 @@ class Emulator(object):
                 steps += 1
                 if max_steps > 0 and steps >= max_steps:
                     break
+            success = True
         except base.ExecuteError as e:
             if self.verbosity >= 1:
-                print('Execution Error: {:s}'.format(e))
+                print('Execution Error: {:s}'.format(str(e)))
             success = False
         except base.UnknownBehavior as e:
             if self.verbosity >= 1:
-                print('Unknown Behavior: {:s}'.format(e))
+                print('Unknown Behavior: {:s}'.format(str(e)))
             success = False
         else:
             success = True
-        finally:
-            return success, steps
+        return success, steps
 
 if __name__ == '__main__':
     import sys
@@ -114,6 +136,9 @@ if __name__ == '__main__':
 
     success, steps = mulator.run(max_steps = 10000)
     print('Success: {}, steps: {:d}'.format(success, steps))
+
+    print(len(mulator.trace))
+    print(len(mulator.iotrace2))
 
     if not outname is None:
         mulator.save(outname)
