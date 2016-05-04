@@ -3,6 +3,21 @@
 import shutil
 import re
 
+def makehex(thing):
+    if isinstance(thing, list):
+        return [makehex(x) for x in thing]
+    elif isinstance(thing, tuple):
+        return tuple([makehex(x) for x in thing])
+    elif isinstance(thing, dict):
+        return {makehex(x) : makehex(thing[x]) for x in thing}
+    elif isinstance(thing, int):
+        return hex(thing)
+    else:
+        return thing
+
+def printhex(thing):
+    print(makehex(thing))
+
 def boring_region(fill, align):
     region = fill * (align // len(fill))
     if len(region) < align:
@@ -169,7 +184,7 @@ def diff_memory(mems, addr, align = 8):
                         merged_regions[mem_idx] += prev_regions[i][mem_idx]
                 chunks[prev_addr] = merged_regions
                 prev_regions = []
-            prev_addr = addr + idx
+            prev_addr = addr + idx + align
         else:
             prev_regions.append(regions)
 
@@ -181,6 +196,22 @@ def diff_memory(mems, addr, align = 8):
         chunks[prev_addr] = merged_regions
 
     return chunks
+
+def is_diff_real(addr, mems, chunks):
+    # print('\n----')
+    # for i, mem in enumerate(mems):
+    #     print(i)
+    #     print(triple_summarize(mem, addr))            
+    # explain_diff(chunks)
+    for chunkaddr in chunks:
+        for i, region in enumerate(chunks[chunkaddr]):
+            ref = mems[i][chunkaddr-addr:chunkaddr-addr+len(region)]
+            if not ref == region:
+                print('checking region {:#x}@{:d} (length {:d})'.format(chunkaddr, i, len(region)))
+                print('  mismatch!\n    expected {:s}\n    diff contains {:s}'.format(
+                    repr(ref), repr(region)))
+                assert(False)
+    # print('----\n')
 
 def explain_diff(diff):
     for addr in sorted(map(str, diff)):
@@ -294,6 +325,8 @@ def print_dict(d, indent = 0):
     k_len = 0
     ellipsis = '\u2026'
     
+    d = makehex(d)
+
     for k in sorted(d):
         v = d[k]
         if isinstance(v, dict):

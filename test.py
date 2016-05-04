@@ -168,7 +168,7 @@ def gen():
     store = storage_start
     words = emit_disable_watchdog() + emit_timer_start()
     for name in itab.fmt1['instructions']:
-    #for name in ['CMP']:
+    #for name in ['ADD']:
         if name not in {'DADD'}:
             for smode in itab.fmt1['smodes']:
                 for dmode in itab.fmt1['dmodes']:

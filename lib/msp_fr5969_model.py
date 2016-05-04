@@ -65,12 +65,14 @@ def mk_read8(ram, fram, trace = None):
     if trace is None:
         def read8(addr):
             if ram_start <= addr and addr < ram_start + ram_size:
-                return ram[addr - ram_start]
+                v = ram[addr - ram_start]
             elif fram_start <= addr and addr < fram_start + fram_size:
-                return fram[addr - fram_start]
+                v = fram[addr - fram_start]
             else:
                 # what's the right thing to do here?????
-                return 0
+                v = 0
+            #print('read {:05x} == {:02x}, notrace'.format(addr, v))
+            return v
     else:
         def read8(addr):
             if ram_start <= addr and addr < ram_start + ram_size:
@@ -81,12 +83,14 @@ def mk_read8(ram, fram, trace = None):
                 # what's the right thing to do here?????
                 v = 0
             iotrace_append(trace, 'r', 'mem', addr, v)
+            #print('read {:05x} == {:02x}, trace'.format(addr, v))
             return v
     return read8
 
 def mk_write8(ram, fram, trace = None):
     if trace is None:
         def write8(addr, byte):
+            #print('write {:05x} <- {:02x}, notrace'.format(addr, byte))
             assert(isinstance(byte, int) and 0 <= byte and byte < 2**mem_bits)
             if ram_start <= addr and addr < ram_start + ram_size:
                 ram[addr - ram_start] = byte
@@ -98,6 +102,7 @@ def mk_write8(ram, fram, trace = None):
                 return
     else:
         def write8(addr, byte):
+            #print('write {:05x} <- {:02x}, trace'.format(addr, byte))
             assert(isinstance(byte, int) and 0 <= byte and byte < 2**mem_bits)
             iotrace_append(trace, 'w', 'mem', addr, byte)
             if ram_start <= addr and addr < ram_start + ram_size:

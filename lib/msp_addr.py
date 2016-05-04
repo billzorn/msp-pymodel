@@ -136,6 +136,9 @@ def compute_and_read_addr(suffix, state, fields, offset = 0, offset_key = None):
         k_offset = 0
     else:
         k_offset = fields[offset_key]
-    fields[aname] = mask_bw(fields[iname] + offset + k_offset, fields['bw'])
+    # getting the rounding behavior right here is actually tricky
+    addr = (fields[iname] + offset + k_offset) & 0xffff
+    # for now, assume we're in the lower 64k and we clear bits 19:16
+    fields[aname] = mask_bw(addr, fields['bw'])
     fields[name] = read_bw(state, fields[aname], fields['bw'])
     return

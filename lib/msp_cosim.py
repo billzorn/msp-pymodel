@@ -16,7 +16,9 @@ class Cosim(object):
         if len(regdiff) > 0:
             diff['regs'] = regdiff
         for addr, size in self.mmap:
-            chunks = utils.diff_memory([driver.md(addr, size) for driver in self.drivers], addr)
+            mems = [driver.md(addr, size) for driver in self.drivers]
+            chunks = utils.diff_memory(mems, addr)
+            utils.is_diff_real(addr, mems, chunks)
             # assumes no overlap
             for k in chunks:
                 diff[k] = chunks[k]
@@ -24,8 +26,15 @@ class Cosim(object):
         
     # regs and memory
     def sync(self, master_idx, diff = None):
+        # print('\n\n')
+        # print('syncing diff')
         if diff is None:
+            # print('no diff provided, getting')
             diff = self.diff()
+        # utils.print_dict(diff)
+        # utils.explain_diff(diff)
+        # print('\n\n')
+
         for idx in range(len(self.drivers)):
             if idx != master_idx:
                 driver = self.drivers[idx]
@@ -41,6 +50,13 @@ class Cosim(object):
                     else:
                         regions = diff[addr]
                         driver.mw(addr, regions[master_idx])
+
+        # afterdiff = self.diff()
+        # if len(afterdiff) > 0:
+        #     print('why is there still a diff?')
+        #     utils.print_dict(afterdiff)
+        #     utils.explain_diff(afterdiff)
+        #     print('\n\n')
 
     def reset(self):
         for driver in self.drivers:

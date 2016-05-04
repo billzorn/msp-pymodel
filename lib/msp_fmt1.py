@@ -1,5 +1,6 @@
 # methods for defining fmt1 instructions
 
+import utils
 import msp_base as base
 import msp_instr as instr
 import msp_addr as addr
@@ -30,7 +31,8 @@ def mk_readfields_src_sym(ins):
         fields = instr.decode_fields(ins, state)
         # I think the value of the pc will be "correct" here, as determined
         # by consistent use of read_another_word
-        addr.compute_and_read_addr('src', state, fields, offset_key='pc')
+        # JK!!! There was an off by 1 (well, one word, so use offset of -2)
+        addr.compute_and_read_addr('src', state, fields, offset=-2, offset_key='pc')
         return fields
     return readfields
 
@@ -101,7 +103,7 @@ def writefields_dst_idx(state, fields):
 
 def keepreading_dst_sym(state, fields):
     # again, I think this will give the right offset
-    addr.compute_and_read_addr('dst', state, fields, offset_key='pc')
+    addr.compute_and_read_addr('dst', state, fields, offset=-2, offset_key='pc')
     return
 
 def writefields_dst_sym(state, fields):

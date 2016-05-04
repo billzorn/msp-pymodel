@@ -43,8 +43,10 @@ class Emulator(object):
         self.reset()
 
     def mw(self, addr, pattern):
+        # print('emulator invoking mw {:05x} '.format(addr), utils.makehex(pattern))
         for i in range(len(pattern)):
             self.state.write8(addr + i, pattern[i])
+        # utils.printhex([self.state.read8(i) for i in range(addr, addr+len(pattern))])
 
     def fill(self, addr, size, pattern):
         for i in range(size):
@@ -54,7 +56,10 @@ class Emulator(object):
         self.state.writereg(register, value)
 
     def md(self, addr, size):
-        return [self.state.read8(i) for i in range(addr, addr+size)]
+        # print('emulator invoking md {:05x} {:d}'.format(addr, size))
+        memreads = [self.state.read8(i) for i in range(addr, addr+size)]
+        # utils.printhex(memreads[:16])
+        return memreads
 
     def regs(self):
         return [self.state.readreg(i) for i in range(len(self.state.regs))]

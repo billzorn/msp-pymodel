@@ -32,6 +32,7 @@ def step_and_sync(cosim, maxter_idx, mulator):
         cosim.sync(master_idx, diff={'regs':regdiff})
     
     recent_io = mulator.iotrace2[-1]
+    #utils.print_dict(recent_io)
     for addr, value in recent_io['w']['mem']:
         if ((model.ram_start <= addr and addr < model.ram_start + model.ram_size)
             or (model.fram_start <= addr and addr < model.fram_start + model.fram_size)):
@@ -74,10 +75,18 @@ if __name__ == '__main__':
             pc = step_and_sync(cosim, master_idx, mulator)
             i += 1
             if i % sync_every == 0:
+                
+                print('doing diff @ {:05x}, step {:d}'.format(pc, i))
+
                 diff = cosim.diff()
                 if len(diff) > 0:
                     print('---- routine diff failed @ {:05x}, step {:d} ----'.format(pc, i))
                     utils.explain_diff(diff)
                     print('')
                     cosim.sync(master_idx, diff=diff)
-        
+
+                    # diff2 = cosim.diff()
+                    # if len(diff2) > 0:
+                    #     print('-- diff not fixed? --')
+                    #     utils.print_dict(diff)
+                    #     exit(0)
