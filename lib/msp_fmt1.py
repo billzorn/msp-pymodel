@@ -57,8 +57,10 @@ def mk_readfields_src_ind(ins):
 
 def mk_readfields_src_ai(ins):
     def keepreading(state, fields):
-        fields['asrc'] = addr.mask_bw(state.readreg(fields['rsrc']), fields['bw'])
-        fields['src'] = addr.read_bw(state, fields['asrc'], fields['bw'])
+        fields['asrc'] = state.readreg(fields['rsrc'])
+        # you have to be careful to read from the masked address, but update the true one
+        effective_addr = addr.mask_bw(fields['asrc'], fields['bw'])
+        fields['src'] = addr.read_bw(state, effective_addr, fields['bw'])
         # mutate the incremented register in place
         # for some reason, the SP is incremented by two even in byte mode...
         # also wrapping?

@@ -73,6 +73,8 @@
 	MOV	#0x3fff, &0xc040
 
 	;; test code here!
+
+	sub     @r4+,   8423(r5)
 	
 	.word	0x3fff	; halt
 	.word	0x3fff	; halt

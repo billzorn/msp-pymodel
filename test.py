@@ -12,8 +12,8 @@ import msp_itable as itab
 import msp_fr5969_model as model
 import msp_elftools as elftools
 
-scratch_start = 0x1c00
-scratch_end   = 0x2400
+scratch_start = 0x1c08
+scratch_end   = 0x23f8
 scratch_size  = scratch_end - scratch_start
 storage_start = 0x4400
 storage_end   = 0x6000
@@ -122,6 +122,8 @@ def emit_fmt1(name, smode, dmode, rsrc, rdst, old_pc):
     if dmode in {'ADDR'}:
         daddr = (daddr - pc) & 0xffff
 
+    print('{:s}: {:x}, {:x}, {:x}'.format(ins.name, pc, saddr, daddr))
+
     # note that we haven't done anything to change the value that starts
     # in the register if it's data (Rn mode), we'll just use whatever's there and
     # it's fine
@@ -158,7 +160,7 @@ def init_storage(size):
     return [0 for _ in range(size // 2)]
 
 def gen():
-    scratch_words = init_scratch(scratch_size)
+    scratch_words =  init_scratch(scratch_size)
     storage_words = init_storage(storage_size)
 
     trn_1 = 14
@@ -167,6 +169,7 @@ def gen():
     old_pc = prog_start
     store = storage_start
     words = emit_disable_watchdog() + emit_timer_start()
+    old_pc += len(words) * 2
     for name in itab.fmt1['instructions']:
     #for name in ['ADD']:
         if name not in {'DADD'}:
@@ -177,12 +180,12 @@ def gen():
                             try:
                                 pc = old_pc
                                 # t1_words = emit_read_timer(trn_1)
-                                # pc += len(t1_words)
+                                # pc += len(t1_words) * 2
                                 fmt1_words = emit_fmt1(name, smode, dmode, rsrc, rdst, pc)
-                                pc += len(fmt1_words)
+                                pc += len(fmt1_words) * 2
                                 # t2_words = emit_read_timer(trn_2)
                                 # store_words = emit_compute_store_timer(trn_1, trn_2, store)
-                                # pc += len(t2_words) + len(store_words)
+                                # pc += (len(t2_words) + len(store_words)) * 2
                             except ValueError as e:
                                 print(e)
                             else:
