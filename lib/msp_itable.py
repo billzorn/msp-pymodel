@@ -148,16 +148,16 @@ def create_jump(name, verbosity = 0):
 def create_itable(verbosity = 0):
     itable = []
 
-    for name in fmt1['instructions']:
-        for smode in fmt1['smodes']:
-            for dmode in fmt1['dmodes']:
+    for name in sorted(fmt1['instructions']):
+        for smode in sorted(fmt1['smodes']):
+            for dmode in sorted(fmt1['dmodes']):
                 itable.append(create_fmt1(name, smode, dmode, verbosity=verbosity))
 
-    for name in fmt2['instructions']:
-        for smode in fmt2['smodes']:
+    for name in sorted(fmt2['instructions']):
+        for smode in sorted(fmt2['smodes']):
             itable.append(create_fmt2(name, smode, verbosity=verbosity))
 
-    for name in jump['instructions']:
+    for name in sorted(jump['instructions']):
         itable.append(create_jump(name, verbosity=verbosity))
 
     return itable

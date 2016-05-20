@@ -12,8 +12,8 @@ import msp_itable as itab
 import msp_fr5969_model as model
 import msp_elftools as elftools
 
-scratch_start = 0x1c08
-scratch_end   = 0x23f8
+scratch_start = 0x1c00
+scratch_end   = 0x2400
 scratch_size  = scratch_end - scratch_start
 storage_start = 0x4400
 storage_end   = 0x6000
@@ -70,7 +70,6 @@ def mov_irn(i, rn):
 
 # put stuff into the register so that we hit this address
 def setup_mode(mode, rn, addr):
-    addr = addr
     if mode in {'X(Rn)'}:
         # split address between register and immediate
         reg_part = random.randint(0, addr-1)
@@ -80,15 +79,23 @@ def setup_mode(mode, rn, addr):
     elif mode in {'@Rn', '@Rn+'}:
         # set the register
         return addr, mov_irn(addr, rn)
+
+    # # for debugging: show the intended addr
+    # elif mode in {'ADDR'}:
+    #     return addr, mov_iaddr(0, addr)
+
     else:
         return addr, []
+
+def cleanup_reg_addr(rn, addr):
+    return mov_irn(r_imm(), rn) + mov_iaddr(r_imm(), addr)
 
 def emit_read_timer(rn):
     return assemble('fmt1', 'MOV', '&ADDR', 'Rn', {'isrc':0x350, 'rdst':rn, 'bw':0})
 
 def emit_compute_store_timer(r1, r2, addr):
     return (assemble('fmt1', 'SUB', 'Rn', 'Rn', {'rsrc':r1, 'rdst':r2, 'bw':0}) +
-            assemble('fmt1', 'MOV', 'Rn', '&ADDR', {'rsrc':r2, 'idst':addr, 'bw':0}))
+            assemble('fmt1', 'MOV', 'Rn', '&ADDR', {'rsrc':r2, 'idst':addr, 'bw':1}))
 
 def emit_disable_watchdog():
     return mov_iaddr(23168, 0x015c)
@@ -100,49 +107,58 @@ def emit_timer_start():
             mov_iaddr(50000, 0x352) +
             assemble('fmt1', 'BIS', '#N', '&ADDR', {'isrc':16, 'idst':0x0340, 'bw':0}))
 
-def emit_fmt1(name, smode, dmode, rsrc, rdst, old_pc):
+def emit_fmt1(name, smode, dmode, rsrc, rdst, old_pc, n = 1):
     if rsrc in {0, 2, 3} and not smode in {'Rn'}:
         raise ValueError('{:s} r{:s}: bad idea'.format(smode, rsrc))
 
     saddr, ssetup = setup_mode(smode, rsrc, r_addr())
-    daddr, dsetup = setup_mode(dmode, rdst, r_addr())
+    full_daddr = r_addr()
+    daddr, dsetup = setup_mode(dmode, rdst, full_daddr)
     words = ssetup + dsetup
     pc = old_pc + (len(words) * 2)
 
     ins = isa.modes_to_instr('fmt1', name, smode, dmode)
-    pc = pc + ins.length
 
     # need to do very special things for the pc
     if rdst == 0:
         assert(False)
-        
-    # fix addresses for pc-relative addressing
-    if smode in {'ADDR'}:
-        saddr = (saddr - pc) & 0xffff
-    if dmode in {'ADDR'}:
-        daddr = (daddr - pc) & 0xffff
 
-    print('{:s}: {:x}, {:x}, {:x}'.format(ins.name, pc, saddr, daddr))
+    ins_words = []
+    for i in range(n):
+        new_saddr = saddr
+        new_daddr = daddr
+        # fix addresses for pc-relative addressing
+        offset = -2
+        if smode in {'ADDR'}:
+            new_saddr = (saddr - pc + offset) & 0xffff
+        if has_immediate(smode):
+            offset -= 2
+        if dmode in {'ADDR'}:
+            new_daddr = (daddr - pc + offset) & 0xffff
 
-    # note that we haven't done anything to change the value that starts
-    # in the register if it's data (Rn mode), we'll just use whatever's there and
-    # it's fine
+        #print('{:s}: {:x}, {:x}, {:x}'.format(ins.name, pc, saddr, daddr))
 
-    # we do need to choose a random immediate for #N mode though
-    if smode in {'#N'}:
-        saddr = r_imm() # bad variable names, ehh
+        # note that we haven't done anything to change the value that starts
+        # in the register if it's data (Rn mode), we'll just use whatever's there and
+        # it's fine
 
-    fields = {'bw':random.randint(0,1)}
+        # we do need to choose a random immediate for #N mode though
+        if smode in {'#N'}:
+            new_saddr = r_imm() # bad variable names, ehh
 
-    if uses_reg(smode):
-        fields['rsrc'] = rsrc
-    if has_immediate(smode):
-        fields['isrc'] = saddr
-    if uses_reg(dmode):
-        fields['rdst'] = rdst
-    if has_immediate(dmode):
-        fields['idst'] = daddr
-    ins_words = isa.inhabitant(ins, fields)
+        fields = {'bw':random.randint(0,1)}
+
+        if uses_reg(smode):
+            fields['rsrc'] = rsrc
+        if has_immediate(smode):
+            fields['isrc'] = new_saddr
+        if uses_reg(dmode):
+            fields['rdst'] = rdst
+        if has_immediate(dmode):
+            fields['idst'] = new_daddr
+        ins_words += isa.inhabitant(ins, fields)
+
+        pc += ins.length
 
     # print()
     # print(hex(old_pc))
@@ -151,7 +167,10 @@ def emit_fmt1(name, smode, dmode, rsrc, rdst, old_pc):
     # print(repr(fields))
     # print([hex(w) for w in ins_words])
 
-    return words + ins_words
+    # cleanup, we expect to diverge from the physical device in situations where we're reading the SR, etc...
+    cleanup = cleanup_reg_addr(rdst, full_daddr)
+
+    return words + ins_words + cleanup
 
 # word based
 def init_scratch(size):
@@ -159,7 +178,7 @@ def init_scratch(size):
 def init_storage(size):
     return [0 for _ in range(size // 2)]
 
-def gen():
+def gen(n):
     scratch_words =  init_scratch(scratch_size)
     storage_words = init_storage(storage_size)
 
@@ -175,24 +194,25 @@ def gen():
         if name not in {'DADD'}:
             for smode in itab.fmt1['smodes']:
                 for dmode in itab.fmt1['dmodes']:
+                #for dmode in ['Rn', 'X(Rn)', '&ADDR']:
                     for rsrc in [0,1,2,3,4]:
                         for rdst in [5]:
                             try:
                                 pc = old_pc
-                                # t1_words = emit_read_timer(trn_1)
-                                # pc += len(t1_words) * 2
-                                fmt1_words = emit_fmt1(name, smode, dmode, rsrc, rdst, pc)
+                                t1_words = emit_read_timer(trn_1)
+                                pc += len(t1_words) * 2
+                                fmt1_words = emit_fmt1(name, smode, dmode, rsrc, rdst, pc, n=n)
                                 pc += len(fmt1_words) * 2
-                                # t2_words = emit_read_timer(trn_2)
-                                # store_words = emit_compute_store_timer(trn_1, trn_2, store)
-                                # pc += (len(t2_words) + len(store_words)) * 2
+                                t2_words = emit_read_timer(trn_2)
+                                store_words = emit_compute_store_timer(trn_1, trn_2, store)
+                                pc += (len(t2_words) + len(store_words)) * 2
                             except ValueError as e:
-                                print(e)
+                                #print(e)
+                                pass
                             else:
-                                #store += 2
+                                store += 1
                                 old_pc = pc
-                                #words += t1_words + fmt1_words + t2_words + store_words
-                                words += fmt1_words
+                                words += t1_words + fmt1_words + t2_words + store_words
 
     assert(old_pc < prog_end and store < storage_end)
 

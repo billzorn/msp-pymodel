@@ -234,6 +234,8 @@ isa = ISA(msp_itable.create_itable())
 
 # sanity test
 if __name__ == '__main__':
+    import sys
+
     isa.print_mappings()
     print('')
     
@@ -283,3 +285,19 @@ if __name__ == '__main__':
     
     utils.print_columns(sorted(['{:5s} {:5s} {:5s}: {:d}'.format(ins.name, ins.smode, ins.dmode, counts[ins]) 
                                 for ins in counts if not ins is None]), padding=3)
+
+    for i in range(len(decode_table)):
+        prev_ins = False if i-1 < 0 else decode_table[i-1]
+        ins = decode_table[i]
+        next_ins = False if i+1 >= len(decode_table) else decode_table[i+1]
+
+        descr = 'None' if ins is None else '{:s}\t{:s}\t{:s}'.format(ins.name, ins.smode, ins.dmode)
+
+        if not prev_ins is ins:
+            sys.stdout.write('[ {:04x} '.format(i))
+            if not next_ins is ins:
+                sys.stdout.write('       ] {:s}\n'.format(descr))
+        elif not next_ins is ins:
+            sys.stdout.write('- {:04x} ] {:s}\n'.format(i,descr))
+
+        

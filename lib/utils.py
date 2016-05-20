@@ -281,6 +281,9 @@ def print_columns(lines, columns = None, padding = 1, ralign = False):
         termwidth, _ = termsz
     except:
         termwidth = 0
+    
+    if termwidth > 0:
+        termwidth -= 1
 
     fieldwidth = maxlen + padding
     if columns is None:
