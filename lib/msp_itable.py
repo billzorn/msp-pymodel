@@ -7,6 +7,7 @@ import msp_fmt1
 import msp_fmt2
 import msp_jump
 
+fmt1_name = 'fmt1'
 fmt1 = {
     'fields' : {
         'rdst' : (0,  3, ),
@@ -53,7 +54,7 @@ fmt1 = {
 
 def create_fmt1(name, smode, dmode, verbosity = 0):
     opc, execute = fmt1['instructions'][name]
-    ins = instr.Instr(opc, fmt1['fields'], name=name, fmt='fmt1', verbosity=verbosity)
+    ins = instr.Instr(opc, fmt1['fields'], name=name, fmt=fmt1_name, verbosity=verbosity)
 
     n, mk_readfields, a_bitval, r_bitval = fmt1['smodes'][smode]
     addr.set_fmt1_src(ins, smode, n, mk_readfields, a_bitval,
@@ -66,6 +67,7 @@ def create_fmt1(name, smode, dmode, verbosity = 0):
     ins.execute = execute
     return ins
 
+fmt2_name = 'fmt2'
 fmt2 = {
     'fields' : {
         'rsrc' : (0, 3, ),
@@ -98,7 +100,7 @@ fmt2 = {
 
 def create_fmt2(name, smode, verbosity = 0):
     opc, execute, writefields_exec = fmt2['instructions'][name]
-    ins = instr.Instr(opc, fmt2['fields'], name=name, fmt='fmt2', verbosity=verbosity)
+    ins = instr.Instr(opc, fmt2['fields'], name=name, fmt=fmt2_name, verbosity=verbosity)
 
     n, mk_readfields, writefields, a_bitval, r_bitval = fmt2['smodes'][smode]
     addr.set_fmt2_src(ins, smode, n, mk_readfields, writefields, a_bitval,
@@ -109,6 +111,7 @@ def create_fmt2(name, smode, verbosity = 0):
     ins.execute = execute
     return ins
 
+jump_name = 'jump'
 jump = {
     'fields' : {
         'offset' : (0,  8, ),
@@ -131,7 +134,7 @@ jump = {
 
 def create_jump(name, verbosity = 0):
     opc, cond, execute = jump['instructions'][name]
-    ins = instr.Instr(opc, jump['fields'], name=name, fmt='jump', verbosity=verbosity)
+    ins = instr.Instr(opc, jump['fields'], name=name, fmt=jump_name, verbosity=verbosity)
 
     (cond_firstbit, cond_lastbit) = jump['fields']['cond']
     if verbosity >= 3:
@@ -162,6 +165,19 @@ def create_itable(verbosity = 0):
 
     return itable
 
+def create_fmap():
+
+    def add_to_fmap(fmap, instructions, fmt_name):
+        for name in instructions:
+            assert name not in fmap, 'name {:s} exists under multiple formats'.format(repr(name))
+            fmap[name] = fmt_name
+
+    fmap = {}
+    add_to_fmap(fmap, sorted(fmt1['instructions']), fmt1_name)
+    add_to_fmap(fmap, sorted(fmt2['instructions']), fmt2_name)
+    add_to_fmap(fmap, sorted(jump['instructions']), jump_name)
+    return fmap
+
 # sanity test
 if __name__ == '__main__':
     itab = create_itable(verbosity = 10)
@@ -172,3 +188,8 @@ if __name__ == '__main__':
         ins.describe()
     print('')
     print('{:d} instructions'.format(len(itab)))
+
+    fmap = create_fmap()
+    print(repr(fmap))
+    for k in fmap:
+        print('  {:s} : {:s}'.format(repr(k), repr(fmap[k])))

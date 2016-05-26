@@ -83,9 +83,10 @@ def mk_decode(instrs):
 # isa class
 
 class ISA(object):
-    def __init__(self, instrs):
+    def __init__(self, instrs, fmap):
         self.instrs = instrs
         self.decode = mk_decode(instrs)
+        self.name_to_fmt = fmap
         def add_to_map(m, k):
             if not k in m:
                 m[k] = len(m)
@@ -230,7 +231,7 @@ class ISA(object):
 # use these instead of creating your own, as instruction equality works
 # by pointer comparison
 
-isa = ISA(msp_itable.create_itable())
+isa = ISA(msp_itable.create_itable(), msp_itable.create_fmap())
 
 # sanity test
 if __name__ == '__main__':
