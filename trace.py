@@ -42,6 +42,7 @@ def arff_entry(indices, cycles):
         bins[k] = bins.setdefault(k, 0) + 1
     return ', '.join([str(bins[i]) if i in bins else '0' for i in range(len(isa.ids_ins))] + [str(cycles)])
 
+
 def trace_elf(elfname, jname):
     with MSPdebug(verbosity=0) as driver:
         mulator = Emulator(verbosity=0, tracing=True)
@@ -128,9 +129,71 @@ def create_arff(blocks, arffname):
 
             f.write(arff_entry(indices, cycles) + '\n')
 
+def walk_micros(testdir, suffix = '.elf'):
+    roots = set()
+    for root, dirs, files in os.walk(testdir, followlinks=True):
+        if root in roots:
+            del dirs[:]
+            continue
+        else:
+            roots.add(root)
 
+        for fname in files:
+            if fname.endswith(suffix):
+                name = fname[:-len(suffix)]
+                elfpath = os.path.join(root, fname)
+                jpath = os.path.join(root, name + '.json')
+                trace_elf(elfpath, jpath)
+
+def walk_traces(testdir):
+    blocks = []
+    roots = set()
+    for root, dirs, files in os.walk(testdir, followlinks=True):
+        if root in roots:
+            del dirs[:]
+            continue
+        else:
+            roots.add(root)
+
+        for fname in files:
+            if fname.endswith('.json'):
+                jname = os.path.join(root, fname)
+                diff, trace, iotrace = load_trace(jname)
+                mismatches = compute_mismatches(diff)
+                mismatches_to_blocks(trace, mismatches, blocks)
+
+    return blocks
+
+def main(args):
+    testdir = args.testdir
+    suffix = args.execute
+    arffname = args.arff
+
+    if suffix:
+        walk_micros(testdir, suffix=suffix)
+
+    if arffname:
+        blocks = walk_traces(testdir)
+        create_arff(blocks, arffname)
 
 if __name__ == '__main__':
+    import argparse
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('testdir',
+                        help='directory to look for files in')
+    parser.add_argument('-e', '--execute',
+                        help='execute micros with this suffix')
+    parser.add_argument('-a', '--arff',
+                        help='accumulate data into arff file')
+    args = parser.parse_args()
+
+    main(args)
+    exit(0)
+
+
+
+
     if len(sys.argv) < 3:
         print('usage: {:s} <ELF> <ARFF>'.format(sys.argv[0]))
         exit(1)
