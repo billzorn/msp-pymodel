@@ -4,12 +4,13 @@ from msp_isa import isa
 
 def _as(fmt, name, smode, dmode, fields):
     ins = isa.modes_to_instr(fmt, name, smode, dmode)
+    #print('{:s} {:s} {:s} {:s}'.format(name, smode, dmode, repr(fields)))
     words = isa.inhabitant(ins, fields)
     return words
 
 def assemble(name, smode, dmode, fields):
-    fmt = isa.name_to_fmt(name)
-    return _as(fmt, name, smode, dmode)
+    fmt = isa.name_to_fmt[name]
+    return _as(fmt, name, smode, dmode, fields)
 
 # We record used registers as sets: this could be very compactly represented
 # with machine integer backed bit sets, but whatever.
@@ -41,9 +42,9 @@ class Reginfo(object):
 # helpful predicates:
 
 def has_immediate(mode):
-    if mode in {'X(Rn)', 'ADDR', '&ADDR', '#N'}:
+    if mode in {'X(Rn)', 'ADDR', '&ADDR', '#@N', '#N'}:
         return True
-    elif mode in {'Rn', '#1', '@Rn', '@Rn+'}:
+    elif mode in {'Rn', '#1', '@Rn', '@Rn+', 'none'}:
         return False
     else:
         raise ValueError('not an addressing mode: {:s}'.format(mode))
@@ -51,7 +52,7 @@ def has_immediate(mode):
 def has_reg(mode):
     if mode in {'Rn', 'X(Rn)', '@Rn', '@Rn+'}:
         return True
-    elif mode in {'ADDR', '&ADDR', '#1', '#N'}:
+    elif mode in {'ADDR', '&ADDR', '#1', '#@N', '#N'}:
         return False
     else:
         raise ValueError('not an addressing mode: {:s}'.format(mode))
@@ -61,12 +62,12 @@ def has_reg(mode):
 def has_cg(mode, rn):
     if mode == 'Rn':
         if rn == 3:
-            return 0 # sort of...
+            return 0 # the same as reading the register
     elif mode == 'X(Rn)':
         if rn == 2:
-            return 0 # effectively
+            return 0 # alternative encoding of &ADDR mode
         elif rn == 3:
-            return 1 # alternative encoding support
+            return 1 # alternative encoding of #1 mode
     elif mode == '@Rn':
         if rn == 2:
             return 4
@@ -82,7 +83,7 @@ def has_cg(mode, rn):
 def uses_addr(mode, rn):
     if mode in {'X(Rn)', 'ADDR', '&ADDR', '@Rn', '@Rn+'}:
         return not has_cg(mode, rn)
-    elif mode in {'Rn', '#1', '#N'}:
+    elif mode in {'Rn', '#1', '#@N', '#N'}:
         return False
     else:
         raise ValueError('not an addressing mode: {:s}'.format(mode))
@@ -90,19 +91,52 @@ def uses_addr(mode, rn):
 def uses_reg(mode, rn):
     if mode in {'Rn', 'X(Rn)', '@Rn', '@Rn+'}:
         return has_cg(mode, rn) is not None
-    elif mode in {'ADDR', '&ADDR', '#1', '#N'}:
+    elif mode in {'ADDR', '&ADDR', '#1', '#@N', '#N'}:
         return False
     else:
         raise ValueError('not an addressing mode: {:s}'.format(mode))
 
+# assembly with dynamic computation of symbols
+def assemble_sym(name, smode, dmode, symfields, pc):
+    fields = {}
+    for fieldname in symfields:
+        sym_v = symfields[fieldname]
+        if isinstance(sym_v, tuple):
+            if sym_v[0] == 'PC_ABS':
+                addr = sym_v[1]
+                offs = pc
+                if fieldname in {'isrc'}:
+                    offs += 2
+                elif fieldname in {'idst'}:
+                    offs += 2
+                    if has_immediate(smode):
+                        offs += 2
+                v = (addr - offs) & 0xffff # hard-coded 16-bit immediate
+            else:
+                raise ValueError('unsupported assembly directive: {:s}'.format(sym_v[0]))
+        else:
+            v = sym_v
+        fields[fieldname] = v
+    return assemble(name, smode, dmode, fields)
 
-# would probably like to have good support for getting the right symbolic mode offset,
-# not clear if that needs to be in here
+def assemble_symregion(instructions, base_pc):
+    words = []
+    pc = base_pc
 
-# not entirely clear what to do with these
-def mov_iaddr(i, addr):
-    return assemble('MOV', '#N', '&ADDR', {'isrc':i, 'idst':addr, 'bw':0})
+    for args in instructions:
+        new_words = assemble_sym(*(args + (pc,)))
+        pc += len(new_words) * 2
+        words += new_words
 
-def mov_irn(i, rn):
-    return assemble('MOV', '#N', 'Rn', {'isrc':i, 'rdst':rn, 'bw':0})
+    return words
 
+def region_size(instructions):
+    size = 0
+    for name, smode, dmode, fields in instructions:
+        size += 2
+        if has_immediate(smode):
+            size += 2
+        if has_immediate(dmode):
+            size += 2
+
+    return size

@@ -41,14 +41,15 @@ fmt1 = {
         '#1'    : (0, msp_fmt1.mk_readfields_src_cg1, 1,       3,   ),
         '@Rn'   : (0, msp_fmt1.mk_readfields_src_ind, 2,       None,),
         '@Rn+'  : (0, msp_fmt1.mk_readfields_src_ai,  3,       None,),
+        '#@N'   : (2, msp_fmt1.mk_readfields_src_N,   2,       0,   ),
         '#N'    : (2, msp_fmt1.mk_readfields_src_N,   3,       0,   ),
     },
     'dmodes' : {
-    #    dmode     n  keepreading                   writefields                   a_bitval r_bitval
-        'Rn'    : (0, msp_fmt1.keepreading_dst_Rn,  msp_fmt1.writefields_dst_Rn,  0,       None,),
-        'X(Rn)' : (2, msp_fmt1.keepreading_dst_idx, msp_fmt1.writefields_dst_idx, 1,       None,),
-        'ADDR'  : (2, msp_fmt1.keepreading_dst_sym, msp_fmt1.writefields_dst_sym, 1,       0,   ),
-        '&ADDR' : (2, msp_fmt1.keepreading_dst_abs, msp_fmt1.writefields_dst_abs, 1,       2,   ),
+    #    dmode     n  keepreading                   mk_writefields                   a_bitval r_bitval
+        'Rn'    : (0, msp_fmt1.keepreading_dst_Rn,  msp_fmt1.mk_writefields_dst_Rn,  0,       None,),
+        'X(Rn)' : (2, msp_fmt1.keepreading_dst_idx, msp_fmt1.mk_writefields_dst_idx, 1,       None,),
+        'ADDR'  : (2, msp_fmt1.keepreading_dst_sym, msp_fmt1.mk_writefields_dst_sym, 1,       0,   ),
+        '&ADDR' : (2, msp_fmt1.keepreading_dst_abs, msp_fmt1.mk_writefields_dst_abs, 1,       2,   ),
     },
 }
 
@@ -60,8 +61,8 @@ def create_fmt1(name, smode, dmode, verbosity = 0):
     addr.set_fmt1_src(ins, smode, n, mk_readfields, a_bitval,
                       r_bitval=r_bitval, verbosity=verbosity)
 
-    n, keepreading, writefields, a_bitval, r_bitval = fmt1['dmodes'][dmode]
-    addr.set_fmt1_dst(ins, dmode, n, keepreading, writefields, a_bitval,
+    n, keepreading, mk_writefields, a_bitval, r_bitval = fmt1['dmodes'][dmode]
+    addr.set_fmt1_dst(ins, dmode, n, keepreading, mk_writefields, a_bitval,
                       r_bitval=r_bitval, verbosity=verbosity)
 
     ins.execute = execute
@@ -86,15 +87,16 @@ fmt2 = {
         'RETI' : (0x26, msp_fmt2.execute_reti, msp_fmt2.writefields_reti,), # 10xx | 300
     },
     'smodes' : {
-    #    smode     n  mk_readfields                   writefields                   a_bitval r_bitval
-        'Rn'    : (0, msp_fmt2.mk_readfields_src_Rn,  msp_fmt2.writefields_src_Rn,  0,       None,),
-        'X(Rn)' : (2, msp_fmt2.mk_readfields_src_idx, msp_fmt2.writefields_src_idx, 1,       None,),
-        'ADDR'  : (2, msp_fmt2.mk_readfields_src_sym, msp_fmt2.writefields_src_sym, 1,       0,   ),
-        '&ADDR' : (2, msp_fmt2.mk_readfields_src_abs, msp_fmt2.writefields_src_abs, 1,       2,   ),
-        '#1'    : (0, msp_fmt2.mk_readfields_src_cg1, msp_fmt2.writefields_src_cg1, 1,       3,   ),
-        '@Rn'   : (0, msp_fmt2.mk_readfields_src_ind, msp_fmt2.writefields_src_ind, 2,       None,),
-        '@Rn+'  : (0, msp_fmt2.mk_readfields_src_ai,  msp_fmt2.writefields_src_ai,  3,       None,),
-        '#N'    : (0, msp_fmt2.mk_readfields_src_N,   msp_fmt2.writefields_src_N,   3,       0,   ),
+    #    smode     n  mk_readfields                   mk_writefields                   a_bitval r_bitval
+        'Rn'    : (0, msp_fmt2.mk_readfields_src_Rn,  msp_fmt2.mk_writefields_src_Rn,  0,       None,),
+        'X(Rn)' : (2, msp_fmt2.mk_readfields_src_idx, msp_fmt2.mk_writefields_src_idx, 1,       None,),
+        'ADDR'  : (2, msp_fmt2.mk_readfields_src_sym, msp_fmt2.mk_writefields_src_sym, 1,       0,   ),
+        '&ADDR' : (2, msp_fmt2.mk_readfields_src_abs, msp_fmt2.mk_writefields_src_abs, 1,       2,   ),
+        '#1'    : (0, msp_fmt2.mk_readfields_src_cg1, msp_fmt2.mk_writefields_src_cg1, 1,       3,   ),
+        '@Rn'   : (0, msp_fmt2.mk_readfields_src_ind, msp_fmt2.mk_writefields_src_ind, 2,       None,),
+        '@Rn+'  : (0, msp_fmt2.mk_readfields_src_ai,  msp_fmt2.mk_writefields_src_ai,  3,       None,),
+        '#@N'   : (0, msp_fmt2.mk_readfields_src_N,   msp_fmt2.mk_writefields_src_N,   2,       0,   ),
+        '#N'    : (0, msp_fmt2.mk_readfields_src_N,   msp_fmt2.mk_writefields_src_N,   3,       0,   ),
     },
 }
 
@@ -102,8 +104,8 @@ def create_fmt2(name, smode, verbosity = 0):
     opc, execute, writefields_exec = fmt2['instructions'][name]
     ins = instr.Instr(opc, fmt2['fields'], name=name, fmt=fmt2_name, verbosity=verbosity)
 
-    n, mk_readfields, writefields, a_bitval, r_bitval = fmt2['smodes'][smode]
-    addr.set_fmt2_src(ins, smode, n, mk_readfields, writefields, a_bitval,
+    n, mk_readfields, mk_writefields, a_bitval, r_bitval = fmt2['smodes'][smode]
+    addr.set_fmt2_src(ins, smode, n, mk_readfields, mk_writefields, a_bitval,
                       r_bitval=r_bitval, verbosity=verbosity)
 
     if not writefields_exec is None:

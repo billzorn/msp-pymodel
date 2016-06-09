@@ -93,8 +93,8 @@ class Cosim(object):
             driver.step()
 
     def run(self, max_steps = 10000, interval = 0.5, passes = 1):
-        done = True
         for _ in range(passes):
+            done = True
             for driver in self.drivers:
                 if self.is_physical[driver]:
                     driver.run(interval=interval)

@@ -75,7 +75,7 @@ def set_fmt1_src(ins, smode, n, mk_readfields, a_bitval,
     ins.readfields = mk_readfields(ins)
     return
 
-def set_fmt1_dst(ins, dmode, n, keepreading, writefields, a_bitval,
+def set_fmt1_dst(ins, dmode, n, keepreading, mk_writefields, a_bitval,
                  a_field = 'ad', r_bitval = None, r_field = 'rdst', verbosity = 0):
     if verbosity >= 1:
         print('setting dmode {:s}, {:s}'.format(ins.name, dmode))
@@ -89,16 +89,16 @@ def set_fmt1_dst(ins, dmode, n, keepreading, writefields, a_bitval,
 
     def readfields_wrapper(state):
         fields = readfields_src(state)
-        keepreading(state, fields)
+        keepreading(ins, state, fields)
         return fields
 
     ins.dmode = dmode
     ins.length += n
     ins.readfields = readfields_wrapper
-    ins.writefields = writefields
+    ins.writefields = mk_writefields(ins)
     return
 
-def set_fmt2_src(ins, smode, n, mk_readfields, writefields, a_bitval,
+def set_fmt2_src(ins, smode, n, mk_readfields, mk_writefields, a_bitval,
                  a_field = 'as', r_bitval = None, r_field = 'rsrc', verbosity = 0):
     if verbosity >= 1:
         print('setting smode {:s}, {:s}'.format(ins.name, smode))
@@ -109,7 +109,7 @@ def set_fmt2_src(ins, smode, n, mk_readfields, writefields, a_bitval,
     ins.smode = smode
     ins.length += n
     ins.readfields = mk_readfields(ins)
-    ins.writefields = writefields
+    ins.writefields = mk_writefields(ins)
     return
 
 # more convenience things for addressing modes

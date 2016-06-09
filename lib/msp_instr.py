@@ -30,6 +30,9 @@ def mk_checkbits(bits):
         return True
     return checkbits
 
+def is_sr_safe(ins):
+    return ins.name in {'MOV', 'BIC', 'BIS', 'SWPB', 'PUSH', 'CALL'}
+
 # Things that control how operations on registers actually work
 pc_bitmask = model.reg_bitmask & -2
 def pcadd(pc, x):

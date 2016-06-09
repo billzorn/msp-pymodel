@@ -119,7 +119,7 @@ def do_cmd(cosim, master_idx, cmd, args):
             if len(args) >= 3:
                 passes = int_or_hex(args[2])
             else:
-                passes = 1
+                passes = 10
             cosim.run(max_steps=max_steps, interval=interval, passes=passes)
         except Exception as e:
             print('run [MAX_STEPS] [INTERVAL] [PASSES]')

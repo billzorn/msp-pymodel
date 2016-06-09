@@ -1,5 +1,6 @@
 import msp_assem as assem
 import msp_itable as itab
+import msp_fr5969_model as model
 
 # There are several ways to perform a timer read:
 # First, we can read to a register. This has the least overhead,
@@ -57,8 +58,32 @@ import msp_itable as itab
 # Again, we could also put in an intermediate load to a register
 # instead of storing the timer directly.
 
-def emit_timer_read_rn(info, rn):
-    return assem.assemble('MOV', '&ADDR', 'Rn', {'isrc':0x0350, 'rdst':rn, 'bw':0})
+def emit_init(start_timer=True):
+    instructions = [
+        # disable watchdog
+        ('MOV', '#N',   '&ADDR', {'isrc':0x5a80, 'idst':0x015c, 'bw':0}),
+        ('JMP', 'none', 'none',  {'s':0, 'offset':1}),     # jump over halt
+        ('JMP', 'none', 'none',  {'s':1, 'offset':0x3ff}), # halt to indicate failure
+    ]
+    if start_timer:
+        instructions += [
+            # start timer
+            ('MOV', '#N', '&ADDR', {'isrc':0x10,  'idst':0x0342, 'bw':0}),
+            ('MOV', '#N', '&ADDR', {'isrc':0x200, 'idst':0x0340, 'bw':0}),
+            ('MOV', 'Rn', '&ADDR', {'rsrc':3,     'idst':0x0350, 'bw':0}), # cg 0
+            ('MOV', '#N', '&ADDR', {'isrc':50000, 'idst':0x0352, 'bw':0}),
+            ('BIS', '#N', '&ADDR', {'isrc':0x10,  'idst':0x0340, 'bw':0}),
+        ]
+    return instructions
+
+def emit_timer_read_rn(rn):
+    return [('MOV', '&ADDR', 'Rn', {'isrc':0x0350, 'rdst':rn, 'bw':0})]
+
+def emit_timer_compute_store(r1, r2, addr):
+    return [
+        ('SUB', 'Rn', 'Rn',    {'rsrc':r1, 'rdst':r2, 'bw':0}),
+        ('MOV', 'Rn', '&ADDR', {'rsrc':r2, 'idst':addr, 'bw':1}),
+    ]
 
 # Brute force iteration over all 'interesting' instruction combinations.
 # The machine basically has 5 registers (R0/PC, R1/SP, R2/SR, R3, R4-R15),
@@ -75,7 +100,7 @@ def iter_fmt1_src():
     #        R0(PC)  R1(SP)  R2(SR)  R3      R4-R15
     # Rn     ok!     ok!     ok!     = 0     ok!
     # X(Rn)  ADDR    ok!     &ADDR   ##1 ?2  ok!
-    # @Rn    ok!     ok!     ##4     ##2     ok!
+    # @Rn    #@N     ok!     ##4     ##2     ok!
     # @Rn+   #N      ok! ?1  ##8     ##-1    ok!
     
     # ?1: The stack pointer always increments by 2 in autoincrement
@@ -96,6 +121,9 @@ def iter_fmt1_src():
                     mode = '&ADDR'
                 elif reg == 3:
                     mode = '#1'
+            elif basemode == '@Rn':
+                if reg == 0:
+                    mode = '#@N'
             elif basemode == '@Rn+':
                 if reg == 0:
                     mode = '#N'
@@ -179,7 +207,7 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             assert rsrc not in {0, 2, 3}, 'invalid source mode: {:s} {:d}'.format(smode, rsrc)
             info.add(uses=[rsrc])
             # for now, move into the register, and use 0 offset...
-            setup.append(('MOV', '#N', 'Rn', {'isrc':saddr, 'rdst':rsrc}))
+            setup.append(('MOV', '#N', 'Rn', {'isrc':saddr, 'rdst':rsrc, 'bw':0}))
             simm = 0
         elif smode in {'ADDR'}:
             simm = ('PC_ABS', saddr) # assembler will resolve at assembly time
@@ -191,7 +219,7 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             if rsrc != 0:
                 info.add(uses=[rsrc])
                 # move address into register
-                setup.append(('MOV', '#N', 'Rn', {'isrc':saddr, 'rdst':rsrc}))
+                setup.append(('MOV', '#N', 'Rn', {'isrc':saddr, 'rdst':rsrc, 'bw':0}))
         else:
             assert False, 'unexpected address usage in smode? {:s} {:d}'.format(smode, rsrc)
 
@@ -210,7 +238,7 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                                      .format(rdst))
             else:
                 info.add(uses=[rdst])
-                setup.append(('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':rdst}))
+                setup.append(('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':rdst, 'bw':0}))
                 dimm = 0
         elif dmode in {'ADDR'}:
             dimm = ('PC_ABS', daddr) # let assembler resolve
@@ -247,15 +275,23 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
 
 # addr is the base pc at which the text of this micro will start
 # codes is a list of instructions to put in between the measurements:
-#  (name, smode, dmode, rsrc, rdst, bw)
-def emit_micro(addr, codes):
+# (name, smode, dmode, rsrc, rdst, bw)
+def emit_micro(addr, codes, measure=True):
+    timer_r1 = 14
+    timer_r2 = 15
 
     # record dependencies: will need to be strengthened
     info = assem.Reginfo()
 
     # sequences to emit... computing pc relative addresses is going to be gross
+    measure_pre = []
     setup = []
     bench = []
+    measure_post = []
+
+    if measure:
+        info.add(uses=[timer_r1], clobbers=[timer_r1])
+        measure_pre += emit_timer_read_rn(timer_r1)
 
     # the tricky things are:
     #  1) making sure that we don't try to access invalid addresses
@@ -270,13 +306,99 @@ def emit_micro(addr, codes):
         setup += local_setup
         bench += local_bench
 
-    for e in setup:
-        print(repr(e))
-    if setup:
-        print('----')
-    for e in bench:
-        print(repr(e))
-    
+    if measure:
+        info.add(uses=[timer_r2], clobbers=[timer_r2, 2])
+        measure_post += emit_timer_read_rn(timer_r2)
+        measure_post += emit_timer_compute_store(timer_r1, timer_r2, addr)
+
+    teardown = []
+    # reset all registers that might have unknown state
+    for rn in info.clobbers:
+        teardown.append(('MOV', 'Rn', 'Rn', {'rsrc':3, 'rdst':rn, 'bw':0}))
+
+    return measure_pre + setup + bench + measure_post + teardown
+
+# pack up executables from the provided generator of instruction codes
+def iter_states(codes_iterator, measure = True):
+    start_addr = model.fram_start
+    end_addr = model.ivec_start - 16
+    size = end_addr - start_addr
+
+    header_region = emit_init(start_timer = measure)
+    header_size = assem.region_size(header_region)
+
+    current_addr = start_addr
+    current_region = []
+    current_size = 0
+    states = []
+
+    for codes in codes_iterator:
+        try:
+            region = emit_micro(current_addr, codes, measure=measure)
+        except ValueError:
+            continue
+
+        rsize = assem.region_size(region)
+        start_pc = current_addr
+        if start_pc % 2 == 1:
+            start_pc += 1
+
+        if header_size + current_size + (start_pc - start_addr) > size:
+            words = assem.assemble_symregion(header_region + current_region, start_pc)
+            assert len(words) * 2 == header_size + current_size
+
+            state = model.Model()
+            write16 = model.mk_write16(state.write8)
+            for i in range(start_pc - start_addr):
+                state.write8(start_addr + i, 0)
+            for i in range(len(words)):
+                write16(start_pc + (i*2), words[i])
+            # halt
+            for i in range(8):
+                write16(start_pc + header_size + current_size + (i*2), 0x3fff)
+            # ram
+            write16(0x1c00, 0x5555)
+            write16(0x1c02, 0xaaaa)
+            # resetvec
+            write16(model.resetvec, start_pc)
+            states.append(state)
+
+            current_addr = start_addr
+
+            # recalculate, so we get the first addr right for the next state
+            region = emit_micro(current_addr, codes, measure=measure)
+            rsize = assem.region_size(region)
+
+            current_region = region
+            current_size = rsize
+
+        else:
+            current_addr += 1
+            current_region += region
+            current_size += rsize
+
+    if len(current_region) > 0:
+        words = assem.assemble_symregion(header_region + current_region, start_pc)
+        assert len(words) * 2 == header_size + current_size
+
+        state = model.Model()
+        write16 = model.mk_write16(state.write8)
+        for i in range(start_pc - start_addr):
+            state.write8(start_addr + i, 0)
+        for i in range(len(words)):
+            write16(start_pc + (i*2), words[i])
+        # halt
+        for i in range(8):
+            write16(start_pc + header_size + current_size + (i*2), 0x3fff)
+        # ram
+        write16(0x1c00, 0x5555)
+        write16(0x1c02, 0xaaaa)
+        # resetvec
+        write16(model.resetvec, start_pc)
+        states.append(state)
+
+    return states
+
 
 if __name__ == '__main__':
     good = 0

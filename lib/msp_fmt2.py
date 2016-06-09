@@ -19,29 +19,39 @@ mk_readfields_src_cg1 = fmt1.mk_readfields_src_cg1
 
 # destination modes, which are kind of like the source modes
 
-def writefields_src_Rn(state, fields):
-    instr.write_pc_sr(state, fields)
-    state.writereg(fields['rsrc'], fields['src'])
-    return
+def mk_writefields_src_Rn(ins):
+    def writefields_src_Rn(state, fields):
+        state.writereg(0, fields['pc'])
+        state.writereg(fields['rsrc'], fields['src'])
+        if not instr.is_sr_safe(ins):
+            state.writereg(2, fields['sr'])
+        return
+    return writefields_src_Rn
 
-def writefields_src_idx(state, fields):
-    instr.write_pc_sr(state, fields)
-    # I don't think the funny business with X(R3) can occur here because this isn't
-    # really a destination mode
-    addr.write_bw(state, fields['asrc'], fields['src'], fields['bw'])
-    return
+def mk_writefields_src_idx(ins):
+    def writefields_src_idx(state, fields):
+        instr.write_pc_sr(state, fields)
+        # I don't think the funny business with X(R3) can occur here because this isn't
+        # really a destination mode
+        addr.write_bw(state, fields['asrc'], fields['src'], fields['bw'])
+        return
+    return writefields_src_idx
 
 # identical logic
-writefields_src_sym = writefields_src_idx
-writefields_src_abs = writefields_src_idx
-writefields_src_ind = writefields_src_idx
-writefields_src_ai  = writefields_src_idx
+mk_writefields_src_sym = mk_writefields_src_idx
+mk_writefields_src_abs = mk_writefields_src_idx
+mk_writefields_src_ind = mk_writefields_src_idx
+mk_writefields_src_ai  = mk_writefields_src_idx
 
-def writefields_src_N(state, fields):
-    raise base.UnknownBehavior('fmt2 dst #N')
+def mk_writefields_src_N(ins):
+    def writefields_src_N(state, fields):
+        raise base.UnknownBehavior('fmt2 dst #N')
+    return writefields_src_N
 
-def writefields_src_cg1(state, fields):
-    raise base.UnknownBehavior('fmt2 dst cg1')
+def mk_writefields_src_cg1(ins):
+    def writefields_src_cg1(state, fields):
+        raise base.UnknownBehavior('fmt2 dst cg1')
+    return writefields_src_cg1
 
 # execution logic
 

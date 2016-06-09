@@ -83,42 +83,55 @@ def mk_readfields_src_N(ins):
 
 # destination modes
 
-def keepreading_dst_Rn(state, fields):
-    fields['dst'] = state.readreg(fields['rdst'])
+def keepreading_dst_Rn(ins, state, fields):
+    # Reading the PC is still weird.
+    rn = fields['rdst']
+    if rn == 0:
+        fields['dst'] = instr.readpc(ins, fields)
+    else:
+        fields['dst'] = state.readreg(rn)
     return
 
-def writefields_dst_Rn(state, fields):
-    instr.write_pc_sr(state, fields)
-    state.writereg(fields['rdst'], fields['dst'])
-    return
+def mk_writefields_dst_Rn(ins):
+    def writefields_dst_Rn(state, fields):
+        state.writereg(0, fields['pc'])
+        state.writereg(fields['rdst'], fields['dst'])
+        if not instr.is_sr_safe(ins):
+            state.writereg(2, fields['sr'])
+        return
+    return writefields_dst_Rn
 
-def keepreading_dst_idx(state, fields):
+def keepreading_dst_idx(ins, state, fields):
     addr.compute_and_read_addr('dst', state, fields, offset=state.readreg(fields['rdst']))
     return
 
-def writefields_dst_idx(state, fields):
-    if fields['rdst'] == 3:
-        raise base.UnknownBehavior('fmt1 dst X(R3)')
-    instr.write_pc_sr(state, fields)
-    addr.write_bw(state, fields['adst'], fields['dst'], fields['bw'])
-    return
+def mk_writefields_dst_idx(ins):
+    def writefields_dst_idx(state, fields):
+        if fields['rdst'] == 3:
+            raise base.UnknownBehavior('fmt1 dst X(R3)')
+        instr.write_pc_sr(state, fields)
+        addr.write_bw(state, fields['adst'], fields['dst'], fields['bw'])
+        return
+    return writefields_dst_idx
 
-def keepreading_dst_sym(state, fields):
+def keepreading_dst_sym(ins, state, fields):
     # again, I think this will give the right offset
     addr.compute_and_read_addr('dst', state, fields, offset=-2, offset_key='pc')
     return
 
-def writefields_dst_sym(state, fields):
-    instr.write_pc_sr(state, fields)
-    addr.write_bw(state, fields['adst'], fields['dst'], fields['bw'])
-    return
+def mk_writefields_dst_sym(ins):
+    def writefields_dst_sym(state, fields):
+        instr.write_pc_sr(state, fields)
+        addr.write_bw(state, fields['adst'], fields['dst'], fields['bw'])
+        return
+    return writefields_dst_sym
 
-def keepreading_dst_abs(state, fields):
+def keepreading_dst_abs(ins, state, fields):
     addr.compute_and_read_addr('dst', state, fields)
     return
 
 # the logic is identical
-writefields_dst_abs = writefields_dst_sym
+mk_writefields_dst_abs = mk_writefields_dst_sym
 
 # exec logic
 
