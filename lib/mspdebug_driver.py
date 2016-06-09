@@ -25,8 +25,8 @@ enq_sleeptime = 1.0 / 120.0
 default_timeout = 1.0 / 60.0
 default_retries = int(20 / default_timeout)
 
-def enqueue_output(out, queue):
-    while True:
+def enqueue_output(out, queue, active):
+    while active[0]:
         c = out.read(1)
         while c != '':
             queue.put(c)
@@ -92,12 +92,15 @@ class MSPdebug(object):
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         # massive pile of threading code for nonblocking IO
+        self.io_active = [True]
         self.stdout_q = Queue()
-        self.stdout_t = Thread(target=enqueue_output, args=(self.mspdebug.stdout, self.stdout_q))
+        self.stdout_t = Thread(target=enqueue_output,
+                               args=(self.mspdebug.stdout, self.stdout_q, self.io_active))
         self.stdout_t.daemon = True
         self.stdout_t.start()
         self.stderr_q = Queue()
-        self.stderr_t = Thread(target=enqueue_output, args=(self.mspdebug.stderr, self.stderr_q))
+        self.stderr_t = Thread(target=enqueue_output,
+                               args=(self.mspdebug.stderr, self.stderr_q, self.io_active))
         self.stderr_t.daemon = True
         self.stderr_t.start()
         
@@ -153,6 +156,11 @@ class MSPdebug(object):
         if len(stderr_output) > 0:
             print('Unexpected output from mspdebug on stderr:')
             print(stderr_output)
+
+        self.io_active[0] = False
+        self.stdout_t.join()
+        self.stderr_t.join()
+
         try:
             self.mspdebug.communicate()
         except IOError as e:

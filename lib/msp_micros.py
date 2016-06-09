@@ -369,6 +369,9 @@ def iter_states(codes_iterator, measure = True):
             region = emit_micro(current_addr, codes, measure=measure)
             rsize = assem.region_size(region)
 
+            # increment, so we don't accidentally reuse the start_addr again
+            current_addr += 1
+
             current_region = region
             current_size = rsize
 

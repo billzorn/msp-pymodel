@@ -4,6 +4,7 @@
 
 import sys
 import os
+import json
 
 libdir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib')
 sys.path.append(libdir)
@@ -41,22 +42,14 @@ def arff_entry(indices, cycles):
         bins[k] = bins.setdefault(k, 0) + 1
     return ', '.join([str(bins[i]) if i in bins else '0' for i in range(len(isa.ids_ins))] + [str(cycles)])
 
-if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        print('usage: {:s} <ELF> <ARFF>'.format(sys.argv[0]))
-        exit(1)
-
-    fname = sys.argv[1]
-    arffname = sys.argv[2]
-
-    # bring up cosim
+def trace_elf(elfname, jname):
     with MSPdebug(verbosity=0) as driver:
         mulator = Emulator(verbosity=0, tracing=True)
         mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
         cosim = Cosim([driver, mulator], [True, False], mmap)
         master_idx = 0
 
-        cosim_repl.prog_and_sync(cosim, master_idx, fname)
+        cosim_repl.prog_and_sync(cosim, master_idx, elfname)
 
         max_steps = 10000
         interval = 1
@@ -67,62 +60,91 @@ if __name__ == '__main__':
         trace = mulator.trace
         iotrace = mulator.iotrace2
 
-        mismatches = {}
-        for addr in diff:
-            if addr != 'regs':
-                mems = diff[addr]
-                assert(len(mems) == 2)
-                assert(len(mems[0]) == len(mems[1]))
-                for i in range(len(mems[0])):
-                    if mems[0][i] != mems[1][i]:
-                        mismatches[addr+i] =  (mems[0][i], mems[1][i])
-        #print(mismatches)
+    with open(jname, 'wt') as f:
+        json.dump({'diff':diff, 'trace':trace, 'iotrace':iotrace}, f)
 
-        blocks = []
-        current = []
-        in_region = False
-        in_store = False
-        for fields in trace:
-            if is_timer_read(fields, 14):
-                assert(current == [] and in_region == False)
-                in_region = True
-            elif is_timer_read(fields, 15):
-                assert(len(current) > 0 and in_region == True)
-                in_region = False
-            elif is_reg_sub(fields, 14, 15):
-                assert(in_region == False)
-                in_store = True
+def load_trace(jname):
+    with open(jname, 'rt') as f:
+        jobj = json.load(f)
+    return jobj['diff'], jobj['trace'], jobj['iotrace']
 
-            if in_store:
-                assert(in_region == False)
-                addr = is_reg_store(fields, 15)
-                if addr > 0:
-                    blocks.append((addr, current, mismatches[addr]))
-                    current = []
-                    in_store = False
+def compute_mismatches(diff):
+    mismatches = {}
+    for addr in diff:
+        if addr != 'regs':
+            mems = diff[addr]
+            assert len(mems) == 2
+            assert len(mems[0]) == len(mems[1])
+            for i in range(len(mems[0])):
+                if mems[0][i] != mems[1][i]:
+                    mismatches[int(addr)+i] = (mems[0][i], mems[1][i])
+    return mismatches
 
-            elif in_region:
-                current.append(fields)
+# Consumes mismatches to add to blocks.
+# Asserts that mismatches is empty when it finishes (no mismatches were not able
+# to be explained by looking at the trace).
+def mismatches_to_blocks(trace, mismatches, blocks):
+    current = []
+    in_region = False
+    in_store = False
+    for fields in trace:
+        if is_timer_read(fields, 14):
+            assert current == [] and in_region == False
+            in_region = True
+        elif is_timer_read(fields, 15):
+            assert len(current) > 0 and in_region == True
+            in_region = False
+        elif is_reg_sub(fields, 14, 15):
+            assert in_region == False
+            in_store = True
 
-        with open(arffname, 'wt') as f:
-            f.write(arff_header() + '\n')
+        if in_store:
+            assert in_region == False
+            addr = is_reg_store(fields, 15)
+            if addr > 0:
+                # print('{:s} | {:s}'.format(repr(addr), repr(current)))
+                blocks.append((addr, current, mismatches.pop(addr)))
+                current = []
+                in_store = False
 
-            for addr, block, difference in blocks:
-                assert(len(difference) == 2 and difference[1] == 0)
-                cycles = difference[0]
-                indices = []
-                description = []
-                for fields in block:
-                    ins = isa.decode(fields['words'][0])
-                    idx = isa.instr_to_idx(ins)
-                    modes = isa.idx_to_modes(idx)
-                    indices.append(idx)
-                    description.append('  {:s} {:s}, {:s}'.format(*modes[1:]))
+        elif in_region:
+            current.append(fields)
 
-                # print('{:d}: {:s}'.format(cycles, ', '.join(indices)))
-                # for s in description:
-                #     print(s)
+def create_arff(blocks, arffname):
+    with open(arffname, 'wt') as f:
+        f.write(arff_header() + '\n')
 
-                f.write(arff_entry(indices, cycles) + '\n')
-                
-        
+        for addr, block, difference in blocks:
+            assert(len(difference) == 2 and difference[1] == 0)
+            cycles = difference[0]
+            indices = []
+            description = []
+            for fields in block:
+                ins = isa.decode(fields['words'][0])
+                idx = isa.instr_to_idx(ins)
+                modes = isa.idx_to_modes(idx)
+                indices.append(idx)
+                description.append('  {:s} {:s}, {:s}'.format(*modes[1:]))
+
+            f.write(arff_entry(indices, cycles) + '\n')
+
+
+
+if __name__ == '__main__':
+    if len(sys.argv) < 3:
+        print('usage: {:s} <ELF> <ARFF>'.format(sys.argv[0]))
+        exit(1)
+
+    fname = sys.argv[1]
+    arffname = sys.argv[2]
+
+    jname = 'foobar.json'
+
+    trace_elf(fname, jname)
+    diff, trace, iotrace = load_trace(jname)
+    mismatches = compute_mismatches(diff)
+    blocks = []
+    mismatches_to_blocks(trace, mismatches, blocks)
+    create_arff(blocks, arffname)
+
+    exit(0)

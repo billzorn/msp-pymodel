@@ -17,4 +17,3 @@ if __name__ == '__main__':
     for i, state in enumerate(states):
         tname = os.path.join(testdir, 't{:d}.elf'.format(i))
         elftools.save(state, tname)
-
