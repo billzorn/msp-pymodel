@@ -183,6 +183,24 @@ def iter_to_depth(n):
                             yield e + [(name, smode, dmode, rsrc, rdst, bw)]
             # fmt2 and jumps will have to go here...
 
+def iter_offset(n):
+    for name in iter_fmt1_ins():
+        # should prolly not just copy pasta this thing everywhere
+        for smode, rsrc in iter_fmt1_src():
+            for dmode, rdst in iter_fmt1_dst():
+                for bw in [0, 1]:
+                    for i in range(n):
+                        yield (([('MOV', 'Rn', 'Rn', 3, 3, 0)] * (n+1)) # NOP
+                               + [(name, smode, dmode, rsrc, rdst, bw)])
+
+def iter_reps(n):
+    for name in iter_fmt1_ins():
+        # should prolly not just copy pasta this thing everywhere
+        for smode, rsrc in iter_fmt1_src():
+            for dmode, rdst in iter_fmt1_dst():
+                for bw in [0, 1]:
+                    for i in range(n):
+                        yield [(name, smode, dmode, rsrc, rdst, bw)] * (i+1)
 
 # Now we need to actually generate micros
 
@@ -319,7 +337,7 @@ def emit_micro(addr, codes, measure=True):
     return measure_pre + setup + bench + measure_post + teardown
 
 # pack up executables from the provided generator of instruction codes
-def iter_states(codes_iterator, measure = True):
+def iter_states(codes_iterator, measure = True, verbosity = 0):
     start_addr = model.fram_start
     end_addr = model.ivec_start - 256
     size = end_addr - start_addr
@@ -332,11 +350,33 @@ def iter_states(codes_iterator, measure = True):
     current_size = 0
     states = []
 
+    condition_failures = 0
+    conflict_failures = 0
+    other_failures = 0
+    successes = 0
+
     for codes in codes_iterator:
         try:
             region = emit_micro(current_addr, codes, measure=measure)
-        except ValueError:
+        except ValueError as e:
+            if verbosity >= 1:
+                if str(e).startswith('condition'):
+                    condition_failures += 1
+                elif str(e).startswith('conflict'):
+                    conflict_failures += 1
+                else:
+                    if verbosity >= 2:
+                        print(e)
+                    other_failures += 1
             continue
+        except Error as e:
+            if verbosity >= 1:
+                if verbosity >= 2:
+                    print(2)
+                other_failures += 1
+            continue
+
+        successes += 1
 
         rsize = assem.region_size(region)
         start_pc = current_addr
@@ -399,6 +439,10 @@ def iter_states(codes_iterator, measure = True):
         # resetvec
         write16(model.resetvec, start_pc)
         states.append(state)
+
+    if verbosity >= 1:
+        print('{:d} successes, {:d} conflicts, {:d} unsupported, {:d} errors'
+              .format(successes, conflict_failures, condition_failures, other_failures))
 
     return states
 
