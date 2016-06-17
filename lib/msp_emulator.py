@@ -19,9 +19,19 @@ class Emulator(object):
         else:
             self.state = model.Model()
 
+        self._mmio_default()
+
         if self.verbosity >= 3:
             print('created {:s}'.format(str(self)))
             self.state.dump()
+
+    def _mmio_default(self):
+        # watchdog (unimplemented)
+        for addr in [0x15c, 0x15d]:
+            self.state.mmio_handle_default(addr)
+        # timerA (unimplemented)
+        for addr in [0x0340, 0x0341, 0x0342, 0x0343, 0x0350, 0x0351, 0x0352, 0x0353]:
+            self.state.mmio_handle_default(addr)
     
     def reset(self):
         reset_pc = model.mk_read16(self.state.read8)(model.resetvec)
@@ -139,7 +149,7 @@ if __name__ == '__main__':
     mulator = Emulator(tracing=True, verbosity=2)
     mulator.prog(fname)
 
-    success, steps = mulator.run(max_steps = 10000)
+    success, steps = mulator.run(max_steps = 100000)
     print('Success: {}, steps: {:d}'.format(success, steps))
 
     print(len(mulator.trace))

@@ -11,7 +11,7 @@ import msp_elftools as elftools
 
 if __name__ == '__main__':
     testdir = sys.argv[1]
-    generator = micros.iter_to_depth(1)
+    generator = micros.iter_to_depth(2)
     states = micros.iter_states(generator, measure=True)
 
     for i, state in enumerate(states):

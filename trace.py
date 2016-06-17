@@ -5,6 +5,7 @@
 import sys
 import os
 import json
+import traceback
 
 libdir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib')
 sys.path.append(libdir)
@@ -43,6 +44,36 @@ def arff_entry(indices, cycles):
     return ', '.join([str(bins[i]) if i in bins else '0' for i in range(len(isa.ids_ins))] + [str(cycles)])
 
 
+run_max_steps = 10000
+run_interval = 1
+run_passes = 3
+
+def check_elf(elfname):
+    mulator = Emulator(verbosity=0, tracing=False)
+    mulator.prog(elfname)
+
+    fram_end = mulator.md(model.upper_start - 256, 256)
+    for byte in fram_end[:-2]:
+        if byte != 255:
+            print('Invalid prog write to reserved fram region:')
+            print(utils.triple_summarize(fram_end, model.upper_start - 256))
+            return False
+    
+    for i in range(run_passes):
+        success, steps = mulator.run(run_max_steps)
+        if not success:
+            return False
+        elif steps < run_max_steps:
+            fram_end = mulator.md(model.upper_start - 256, 256)
+            for byte in fram_end[:-2]:
+                if byte != 255:
+                    print('Invalid run write to reserved fram region:')
+                    print(utils.triple_summarize(fram_end, model.upper_start - 256))
+                    return False
+            return True
+
+    return False
+
 def trace_elf(elfname, jname):
     with MSPdebug(verbosity=0) as driver:
         mulator = Emulator(verbosity=0, tracing=True)
@@ -51,11 +82,7 @@ def trace_elf(elfname, jname):
         master_idx = 0
 
         cosim_repl.prog_and_sync(cosim, master_idx, elfname)
-
-        max_steps = 10000
-        interval = 1
-        passes = 3
-        cosim.run(max_steps=max_steps, interval=interval, passes=passes)
+        cosim.run(max_steps=run_max_steps, interval=run_interval, passes=run_passes)
         
         diff = cosim.diff()
         trace = mulator.trace
@@ -129,7 +156,7 @@ def create_arff(blocks, arffname):
 
             f.write(arff_entry(indices, cycles) + '\n')
 
-def walk_micros(testdir, suffix = '.elf'):
+def walk_micros(testdir, check, execute, suffix = '.elf',):
     roots = set()
     for root, dirs, files in os.walk(testdir, followlinks=True):
         if root in roots:
@@ -143,7 +170,15 @@ def walk_micros(testdir, suffix = '.elf'):
                 name = fname[:-len(suffix)]
                 elfpath = os.path.join(root, fname)
                 jpath = os.path.join(root, name + '.json')
-                trace_elf(elfpath, jpath)
+                if check:
+                    if not check_elf(elfpath):
+                        print('Unexpected behavior! {:s}'.format(elfpath))
+                        continue
+                if execute:
+                    try:
+                        trace_elf(elfpath, jpath)
+                    except Exception:
+                        traceback.print_exc()
 
 def walk_traces(testdir):
     blocks = []
@@ -166,11 +201,13 @@ def walk_traces(testdir):
 
 def main(args):
     testdir = args.testdir
-    suffix = args.execute
+    suffix = args.suffix
+    check = args.check
+    execute = args.execute
     arffname = args.arff
 
-    if suffix:
-        walk_micros(testdir, suffix=suffix)
+    if check or execute:
+        walk_micros(testdir, check, execute, suffix=suffix)
 
     if arffname:
         blocks = walk_traces(testdir)
@@ -182,8 +219,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('testdir',
                         help='directory to look for files in')
-    parser.add_argument('-e', '--execute',
-                        help='execute micros with this suffix')
+    parser.add_argument('suffix', nargs='?', default='.elf',
+                        help='suffix for executable micro files')
+    parser.add_argument('-c', '--check', action='store_true',
+                        help='check micros for incorrect behavior under emulation')
+    parser.add_argument('-e', '--execute', action='store_true',
+                        help='execute micros against real hardware')
     parser.add_argument('-a', '--arff',
                         help='accumulate data into arff file')
     args = parser.parse_args()

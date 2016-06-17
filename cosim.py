@@ -174,17 +174,28 @@ def repl(cosim, master_idx):
 
         prompt()
 
-def main(fname = None, verbosity = 1):
-    with MSPdebug(verbosity=verbosity) as driver:
-        mulator = Emulator(verbosity=verbosity)
-        mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
-        cosim = Cosim([driver, mulator], [True, False], mmap)
+def main(fname = None, emulate = False, verbosity = 1):
+    mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
+    mulator = Emulator(verbosity=verbosity)
+
+    if emulate:
+        cosim = Cosim([mulator], [False], mmap)
         master_idx = 0
 
         if not fname is None:
             prog_and_sync(cosim, master_idx, fname)
-        
+
         repl(cosim, master_idx)
+
+    else:
+        with MSPdebug(verbosity=verbosity) as driver:
+            cosim = Cosim([driver, mulator], [True, False], mmap)
+            master_idx = 0
+
+            if not fname is None:
+                prog_and_sync(cosim, master_idx, fname)
+
+            repl(cosim, master_idx)
 
     print('goodbye!')
 
@@ -195,6 +206,8 @@ if __name__ == '__main__':
 
     parser.add_argument('fname', nargs='?', default=None,
                         help='initial file to program on startup')
+    parser.add_argument('-e', '--emulator', action='store_true',
+                        help='run with emulator only')
     parser.add_argument('-v', '--verbose', type=int, default=1,
                         help='verbosity level')
     
@@ -219,5 +232,5 @@ if __name__ == '__main__':
             scratch_dir = os.path.join(script_dir, 'scratch')
             fname = os.path.join(scratch_dir, 'assembled.elf')
 
-    main(fname=fname, verbosity=args.verbose)
+    main(fname=fname, emulate = args.emulator, verbosity=args.verbose)
     exit(0)

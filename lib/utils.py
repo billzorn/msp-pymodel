@@ -59,6 +59,8 @@ def describe_regs(regs):
 
 def parse_regs(dump):
     lines = dump.strip().split('\n')
+    if lines[0].strip() == 'regs':
+        lines = lines[1:]
     if len(lines) < 4:
         raise ValueError('register dump too short:\n' + dump)
     lines = lines[:4]
@@ -109,21 +111,24 @@ def describe_interesting_memory(mem, addr, fill = [0xff], cols=16):
     boring_row, fill_description = boring_region_description(fill, cols)
            
     boring_count = 0
+    boring_addr = -1
     for idx in range(0, len(mem), cols):
         used_cols = min(cols, len(mem) - idx)
         unused_cols = cols - used_cols
         row_values = mem[idx:idx+used_cols]
         if row_values == boring_row:
+            if boring_count == 0:
+                boring_addr = idx + addr
             boring_count += 1
         else:
             if boring_count > 0:
-                memstr += '{:s} for {:d} bytes ({:d} rows)\n'.format(fill_description, boring_count * cols, boring_count)
+                memstr += '{:05x}: {:s} for {:d} bytes ({:d} rows)\n'.format(boring_addr, fill_description, boring_count * cols, boring_count)
                 boring_count = 0
             memstr += describe_memory_row(mem, addr, idx, cols = cols)
             if idx < len(mem) - cols:
                 memstr += '\n'
     if boring_count > 0:
-        memstr += '{:s} for {:d} bytes ({:d} rows)'.format(fill_description, boring_count * cols, boring_count)
+        memstr += '{:05x}: {:s} for {:d} bytes ({:d} rows)'.format(boring_addr, fill_description, boring_count * cols, boring_count)
     return memstr
 
 def summarize_interesting(description, fill = [0xff], cols=16):
@@ -131,21 +136,24 @@ def summarize_interesting(description, fill = [0xff], cols=16):
     boring_row, fill_description = boring_region_description(fill, cols)
 
     boring_count = 0
+    boring_addr = -1
     description_lines = description.split('\n')
     for i in range(len(description_lines)):
         line = description_lines[i]
-        _, row_values = parse_memory_row(line)
+        addr_value, row_values = parse_memory_row(line)
         if row_values == boring_row:
+            if boring_count == 0:
+                boring_addr = addr_value
             boring_count += 1
         else:
             if boring_count > 0:
-                summary += '{:s} for {:d} bytes ({:d} rows)\n'.format(fill_description, boring_count * cols, boring_count)
+                summary += '{:05x}: {:s} for {:d} bytes ({:d} rows)\n'.format(boring_addr, fill_description, boring_count * cols, boring_count)
                 boring_count = 0
             summary += line.strip()
             if i < len(description_lines) - 1:
                 summary += '\n'
     if boring_count > 0:
-        summary += '{:s} for {:d} bytes ({:d} rows)'.format(fill_description, boring_count * cols, boring_count)
+        summary += '{:05x}: {:s} for {:d} bytes ({:d} rows)'.format(boring_addr, fill_description, boring_count * cols, boring_count)
     return summary
 
 # lel

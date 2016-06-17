@@ -321,7 +321,7 @@ def emit_micro(addr, codes, measure=True):
 # pack up executables from the provided generator of instruction codes
 def iter_states(codes_iterator, measure = True):
     start_addr = model.fram_start
-    end_addr = model.ivec_start - 16
+    end_addr = model.ivec_start - 256
     size = end_addr - start_addr
 
     header_region = emit_init(start_timer = measure)
