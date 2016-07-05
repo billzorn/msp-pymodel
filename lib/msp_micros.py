@@ -232,12 +232,10 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         elif smode in {'&ADDR'}:
             simm = saddr
         elif smode in {'@Rn', '@Rn+'}:
-            assert rsrc not in {2, 3}, 'not an indirect mode? {:s} {:d}'.format(smode, rsrc)
-            # it is probably ok to leave the pc alone here; we can read from it usually
-            if rsrc != 0:
-                info.add(uses=[rsrc])
-                # move address into register
-                setup.append(('MOV', '#N', 'Rn', {'isrc':saddr, 'rdst':rsrc, 'bw':0}))
+            assert rsrc not in {0, 2, 3}, 'not an indirect mode? {:s} {:d}'.format(smode, rsrc)
+            info.add(uses=[rsrc])
+            # move address into register
+            setup.append(('MOV', '#N', 'Rn', {'isrc':saddr, 'rdst':rsrc, 'bw':0}))
         else:
             assert False, 'unexpected address usage in smode? {:s} {:d}'.format(smode, rsrc)
 
@@ -247,7 +245,7 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             assert rdst not in {0, 2, 3}, 'invalid destination mode: {:s} {:d}'.format(smode, rdst)
             # this is ugly
             if info.conflict([rdst]):
-                if rsrc == rdst:
+                if rsrc == rdst and assem.uses_addr(smode, rsrc):
                     # we know the conflict was from this (otherwise we'd have hit a conflict
                     # while setting up the source)
                     dimm = 0x2 # we know rdst holds saddr, this gets us to daddr
@@ -265,16 +263,22 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         else:
             assert False, 'unexpected address usage in dmode? {:s} {:d}'.format(dmode, rdst)
 
-    # make sure value being put into destination is acceptable
-    if dmode == 'Rn' and rdst == 2: # status register
-        if name not in {'CMP', 'BIT'}:
-            raise ValueError('condition: source mode not safe for SR: {:s} {:d}'
-                             .format(smode, rsrc))
-    if dmode == 'Rn' and rdst == 0: # pC
-        if not name in {'CMP', 'BIT'}:
-            raise ValueError('condition: source mode not safe for PC: {:s} {:d}'
-                             .format(smode, rsrc))
-    # just stubs for now
+    if dmode == 'Rn':
+        # make sure value being put into destination is acceptable
+        if rdst == 2: # status register
+            if name not in {'CMP', 'BIT'}:
+                raise ValueError('condition: source mode not safe for SR: {:s} {:d}'
+                                 .format(smode, rsrc))
+        elif rdst == 0: # pc
+            if not name in {'CMP', 'BIT'}:
+                raise ValueError('condition: source mode not safe for PC: {:s} {:d}'
+                                 .format(smode, rsrc))
+        # just stubs for now
+
+        # Otherwise add destination register to clobbers since we're writing to it.
+        # I think this is all we need to do.
+        else:
+            info.add(clobbers=[rdst])
 
     # prepare fields
     fields = {'bw':bw}

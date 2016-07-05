@@ -3,6 +3,19 @@
 import shutil
 import re
 
+mode_ident = {
+    'none'  : 'x',
+    'Rn'    : 'rn',
+    'X(Rn)' : 'idx',
+    'ADDR'  : 'sym',
+    '&ADDR' : 'abs',
+    '#1'    : 'cg1',
+    '@Rn'   : 'ind',
+    '@Rn+'  : 'ai',
+    '#@N'   : 'im2',
+    '#N'    : 'imm',
+}
+
 def makehex(thing):
     if isinstance(thing, list):
         return [makehex(x) for x in thing]

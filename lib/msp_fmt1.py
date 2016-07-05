@@ -178,6 +178,7 @@ def execute_cmp(fields):
 
 def execute_dadd(fields):
     # requires BCD math
+    raise base.UnknownBehavior('execute dadd')
     if fields['bw'] == 1:
         local_bcd_add = arith.mk_bcd_add(8)
     else:

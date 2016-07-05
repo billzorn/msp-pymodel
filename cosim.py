@@ -176,7 +176,7 @@ def repl(cosim, master_idx):
 
 def main(fname = None, emulate = False, verbosity = 1):
     mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
-    mulator = Emulator(verbosity=verbosity)
+    mulator = Emulator(tracing=True, verbosity=verbosity)
 
     if emulate:
         cosim = Cosim([mulator], [False], mmap)

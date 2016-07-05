@@ -10,7 +10,14 @@ class UnknownBehavior(Exception):
     def __str__(self):
         return repr(self.value)
 
+# should remove, not a good idea
 class RiskySuccess(Exception):
+    def __init__(self, value):
+        self.value = value
+    def __str__(self):
+        return repr(self.value)
+
+class Breakpoint(Exception):
     def __init__(self, value):
         self.value = value
     def __str__(self):

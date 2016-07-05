@@ -146,7 +146,7 @@ def mk_bcd_add(bits):
 # arith_fn(src, sr_fields)
 def execute_shift(fields, arith_fn):
     bits = howmanybits(fields)
-    src = trunc_bits(fields['src'])
+    src = trunc_bits(fields['src'], bits)
     sr_fields = unpack_sr(fields['sr'])
     result_t = arith_fn(src, sr_fields)
     sr_fields['n'] = nbit(result_t, bits)

@@ -107,6 +107,19 @@ class Emulator(object):
             self.iotrace2.append(self.iotrace[-1])
             model.iotrace_next(self.iotrace)
 
+
+            # # manual breakpoints / watchpoints
+            # step_io = self.iotrace2[-1]
+            # for addr, value in step_io['w']['mem']:
+            #     if addr >= 0x6000:
+            #         print(hex(pc))
+            #         utils.print_dict(step_io)
+            #         raise base.Breakpoint('manual')
+
+
+            # end
+
+
         if word == 0x3fff:
             # halt
             return False
@@ -122,13 +135,17 @@ class Emulator(object):
                     break
             success = True
         except base.ExecuteError as e:
-            if self.verbosity >= 1:
+            if self.verbosity >= 0:
                 print('Execution Error: {:s}'.format(str(e)))
             success = False
         except base.UnknownBehavior as e:
-            if self.verbosity >= 1:
+            if self.verbosity >= 0:
                 print('Unknown Behavior: {:s}'.format(str(e)))
             success = False
+        except base.Breakpoint as e:
+            if self.verbosity >= 0:
+                print('Breakpoint: {:s}'.format(str(e)))
+            success = True
         else:
             success = True
         return success, steps

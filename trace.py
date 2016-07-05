@@ -17,6 +17,7 @@ from msp_emulator import Emulator
 from msp_cosim import Cosim
 from msp_isa import isa
 import cosim as cosim_repl
+import smt
 
 def is_timer_read(fields, rdst):
     return fields['words'] == [0x4210 | rdst, 0x0350]
@@ -44,6 +45,76 @@ def arff_entry(indices, cycles):
     return ', '.join([str(bins[i]) if i in bins else '0' for i in range(len(isa.ids_ins))] + [str(cycles)])
 
 
+def smt_iname(ins):
+    smode_ident = utils.mode_ident[ins.smode]
+    dmode_ident = utils.mode_ident[ins.dmode]
+    return '_'.join((ins.fmt, ins.name, smode_ident, dmode_ident))
+
+def smt_rname(reg):
+    if reg <= 4:
+        return 'R{:d}'.format(reg)
+    else:
+        return 'R4'
+
+# for smt files only
+#(set-option :produce-unsat-cores true)\n(set-option :produce-models true)\n\n
+
+def smt_instr_header():
+    s = '(declare-datatypes () ((Instr'
+    for ins in isa.ids_ins:
+
+        # temporarily limit to fmt1
+        if ins.fmt != 'fmt1':
+            continue
+
+        s += ' ' + smt_iname(ins)
+    return s + ')))'
+
+def smt_reg_header():
+    return '(declare-datatypes () ((Register R0 R1 R2 R3 R4)))'
+
+def smt_header_1():
+    return smt_instr_header() + '\n(declare-fun time (Instr) Int)'
+
+def smt_footer():
+    return '(check-sat)\n(get-unsat-core)\n(get-model)'
+
+fid = 0
+def smt_entry_1(block, cycles):
+    global fid
+    constraint = '(assert (! (= {:d} (+'.format(cycles)
+    fid += 1
+    for fields in block:
+        ins = isa.decode(fields['words'][0])
+        constraint += ' (time {:s})'.format(smt_iname(ins))
+    return constraint + ')) :named f{:d}))'.format(fid)
+
+def smt_entry_2(block, cycles):
+    constraint = '(assert (= {:d} (+'.format(cycles)
+    for fields in block:
+        ins = isa.decode(fields['words'][0])
+        rsrc = fields['rsrc']
+        rdst = fields['rdst']
+        constraint += ' (time {:s} {:s} {:s})'.format(smt_iname(ins), smt_rname(rsrc), smt_rname(rdst))
+    return constraint + ')))'
+
+
+# some ideas:
+# simplify: for each instruction, ask if we can merge a formula that gives a register-independent
+# timing for that instruction with the rest of the formula
+#
+# various ways to get counterexamples
+#
+# use z3 to get counterexample, examine manually, then propose minimal change to information
+# that z3 is given to try and fix it
+# (first, try prefix of instructions, if this doesn't work, introduce state)
+
+# counterexamples explain why it needs to be why more complicated, and where
+# idea is that the human introduces the simplest change
+# "the log of the counterexamples is interesting"
+# maximal subset that passes? how to do this with a tool
+
+
 run_max_steps = 10000
 run_interval = 1
 run_passes = 3
@@ -58,7 +129,7 @@ def check_elf(elfname):
             print('Invalid prog write to reserved fram region:')
             print(utils.triple_summarize(fram_end, model.upper_start - 256))
             return False
-    
+
     for i in range(run_passes):
         success, steps = mulator.run(run_max_steps)
         if not success:
@@ -83,7 +154,7 @@ def trace_elf(elfname, jname):
 
         cosim_repl.prog_and_sync(cosim, master_idx, elfname)
         cosim.run(max_steps=run_max_steps, interval=run_interval, passes=run_passes)
-        
+
         diff = cosim.diff()
         trace = mulator.trace
         iotrace = mulator.iotrace2
@@ -156,6 +227,29 @@ def create_arff(blocks, arffname):
 
             f.write(arff_entry(indices, cycles) + '\n')
 
+def create_smt(blocks, smtname):
+    with open(smtname, 'wt') as f:
+
+        f.write(smt_header_1() + '\n\n')
+
+        for addr, block, difference in blocks:
+            assert(len(difference) == 2 and difference[1] == 0)
+            cycles = difference[0]
+            f.write(smt_entry_1(block, cycles) + '\n')
+
+        f.write('\n' + smt_footer())
+
+def create_smt_string(blocks):
+    s = smt_header_1() + '\n\n'
+
+    for addr, block, difference in blocks:
+        assert(len(difference) == 2 and difference[1] == 0)
+        cycles = difference[0]
+        s += smt_entry_1(block, cycles) + '\n'
+
+    #s += '\n' + smt_footer()
+    return s
+
 def walk_micros(testdir, check, execute, suffix = '.elf',):
     roots = set()
     for root, dirs, files in os.walk(testdir, followlinks=True):
@@ -205,17 +299,32 @@ def main(args):
     check = args.check
     execute = args.execute
     arffname = args.arff
+    smtname = args.smt
 
     if check or execute:
         walk_micros(testdir, check, execute, suffix=suffix)
 
-    if arffname:
+    if arffname or smtname:
         blocks = walk_traces(testdir)
-        create_arff(blocks, arffname)
+        if arffname:
+            create_arff(blocks, arffname)
+        if smtname:
+            # create_smt(blocks, smtname)
+
+            #formula = create_smt_string(blocks)
+            #smt.solve(formula)
+
+            #smt.solve_0(blocks)
+
+            #smt.solve_instr_0(blocks)
+
+            #smt.solve_1(blocks)
+
+            smt.solve_1_0(blocks)
 
 if __name__ == '__main__':
     import argparse
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument('testdir',
                         help='directory to look for files in')
@@ -227,28 +336,9 @@ if __name__ == '__main__':
                         help='execute micros against real hardware')
     parser.add_argument('-a', '--arff',
                         help='accumulate data into arff file')
+    parser.add_argument('-s', '--smt',
+                        help='accumulate data into smt file')
     args = parser.parse_args()
 
     main(args)
-    exit(0)
-
-
-
-
-    if len(sys.argv) < 3:
-        print('usage: {:s} <ELF> <ARFF>'.format(sys.argv[0]))
-        exit(1)
-
-    fname = sys.argv[1]
-    arffname = sys.argv[2]
-
-    jname = 'foobar.json'
-
-    trace_elf(fname, jname)
-    diff, trace, iotrace = load_trace(jname)
-    mismatches = compute_mismatches(diff)
-    blocks = []
-    mismatches_to_blocks(trace, mismatches, blocks)
-    create_arff(blocks, arffname)
-
     exit(0)
