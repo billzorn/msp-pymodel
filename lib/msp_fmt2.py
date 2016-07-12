@@ -65,8 +65,8 @@ def execute_swpb(fields):
     if fields['bw'] != 0:
         raise base.UnknownBehavior('swpb bw={:d}'.format(fields['bw']))
     bits = 16
-    src = trunc_bits(fields['src'], bits)
-    result_t = (src << 8) | (src & 255)
+    src = arith.trunc_bits(fields['src'], bits)
+    result_t = ((src & 0xff) << 8) | ((src >> 8) & 0xff)
     fields['src'] = result_t
     return
 
@@ -78,16 +78,17 @@ def execute_rra(fields):
 
 def execute_sxt(fields):
     if fields['bw'] != 0:
-        raise base.UnknownBehavior('swpb bw={:d}'.format(fields['bw']))
+        raise base.UnknownBehavior('sxt bw={:d}'.format(fields['bw']))
     bits = 8
     extbits = 16
+    sr_fields = arith.unpack_sr(fields['sr'])
     result_t = arith.sxt_bits(fields['src'], bits, extbits)
-    sr_fields['n'] = nbit(result_t, extbits)
-    sr_fields['z'] = zbit(result_t)
+    sr_fields['n'] = arith.nbit(result_t, extbits)
+    sr_fields['z'] = arith.zbit(result_t)
     sr_fields['c'] = 1 ^ sr_fields['z']
     sr_fields['v'] = 0
     fields['src'] = result_t
-    fields['sr'] = pack_sr(sr_fields)
+    fields['sr'] = arith.pack_sr(sr_fields)
     return
 
 # special execution logic, which goes in writefields
@@ -99,7 +100,12 @@ def writefields_push(state, fields):
     instr.write_pc_sr(state, fields)
     # I think this sp manipulation does the right thing
     sp = instr.regadd(state.readreg(1), -2)
-    addr.write_bw(state, sp, fields['src'], fields['bw'])
+    state.writereg(1, sp)
+    # We have to truncate the source to 8 bits somewhere... might be better to
+    # eventually change this to happen in readfields.
+    bits = arith.howmanybits(fields)
+    src = arith.trunc_bits(fields['src'], bits)
+    addr.write_bw(state, sp, src, fields['bw'])
     return
 
 def execute_call(fields):

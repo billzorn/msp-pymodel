@@ -13,7 +13,7 @@ def trunc_bits(x, bits):
     return x & ~(-1 << bits)
 
 def sxt_bits(x, bits, extbits):
-    if src & (1 << (bits - 1)) == 0:
+    if x & (1 << (bits - 1)) == 0:
         return trunc_bits(x, bits)
     else:
         return trunc_bits(x | (-1 << bits), extbits)

@@ -52,7 +52,7 @@ def has_immediate(mode):
 def has_reg(mode):
     if mode in {'Rn', 'X(Rn)', '@Rn', '@Rn+'}:
         return True
-    elif mode in {'ADDR', '&ADDR', '#1', '#@N', '#N'}:
+    elif mode in {'ADDR', '&ADDR', '#1', '#@N', '#N', 'none'}:
         return False
     else:
         raise ValueError('not an addressing mode: {:s}'.format(mode))
@@ -83,7 +83,7 @@ def has_cg(mode, rn):
 def uses_addr(mode, rn):
     if mode in {'X(Rn)', 'ADDR', '&ADDR', '@Rn', '@Rn+'}:
         return not has_cg(mode, rn)
-    elif mode in {'Rn', '#1', '#@N', '#N'}:
+    elif mode in {'Rn', '#1', '#@N', '#N', 'none'}:
         return False
     else:
         raise ValueError('not an addressing mode: {:s}'.format(mode))
@@ -91,13 +91,13 @@ def uses_addr(mode, rn):
 def uses_reg(mode, rn):
     if mode in {'Rn', 'X(Rn)', '@Rn', '@Rn+'}:
         return has_cg(mode, rn) is not None
-    elif mode in {'ADDR', '&ADDR', '#1', '#@N', '#N'}:
+    elif mode in {'ADDR', '&ADDR', '#1', '#@N', '#N', 'none'}:
         return False
     else:
         raise ValueError('not an addressing mode: {:s}'.format(mode))
 
 # assembly with dynamic computation of symbols
-def assemble_sym(name, smode, dmode, symfields, pc):
+def assemble_sym(name, smode, dmode, symfields, pc, labels):
     fields = {}
     for fieldname in symfields:
         sym_v = symfields[fieldname]
@@ -111,7 +111,24 @@ def assemble_sym(name, smode, dmode, symfields, pc):
                     offs += 2
                     if has_immediate(smode):
                         offs += 2
-                v = (addr - offs) & 0xffff # hard-coded 16-bit immediate
+                v = (addr - offs) & 0xffff #TODO hard-coded 16-bit immediate
+            elif sym_v[0] == 'LABEL':
+                # initial implementation: immediate lookup
+                v = labels[sym_v[1]]
+                # This requires all of the addresses to be precomputed if we want to
+                # be able to jump to labels after this instruction.
+            elif sym_v[0] == 'JLABEL':
+                # offset to jump label
+                addr = labels[sym_v[1]]
+                offs = pc + 2
+                immediate = (addr - offs) & 0x7ff #TODO hard-coded 11-bit immediate
+                v = immediate >> 1 & 0x3ff #TODO hard-coded 9-bit immediate
+            elif sym_v[0] == 'JSIGN':
+                # sign for offset to jump label
+                addr = labels[sym_v[1]]
+                offs = pc + 2
+                immediate = (addr - offs) & 0x7ff #TODO hard-coded 11-bit immediate
+                v = immediate >> 10 & 0x1
             else:
                 raise ValueError('unsupported assembly directive: {:s}'.format(sym_v[0]))
         else:
@@ -119,24 +136,49 @@ def assemble_sym(name, smode, dmode, symfields, pc):
         fields[fieldname] = v
     return assemble(name, smode, dmode, fields)
 
-def assemble_symregion(instructions, base_pc):
+def assemble_symregion(instructions, base_pc, labels = {}):
+    # precompute addresses of labels
+    pc_pre = base_pc
+    for args in instructions:
+        if isinstance(args, str):
+            labels[args] = pc_pre
+        else:
+            name, smode, dmode, fields = args
+            pc_pre += 2
+            if has_immediate(smode):
+                pc_pre += 2
+            if has_immediate(dmode):
+                pc_pre += 2
+            
+    # go back and generate encoding
     words = []
     pc = base_pc
-
     for args in instructions:
-        new_words = assemble_sym(*(args + (pc,)))
-        pc += len(new_words) * 2
-        words += new_words
+        if isinstance(args, str):
+            assert labels[args] == pc
+        else:
+            new_words = assemble_sym(*(args + (pc, labels)))
+            pc += len(new_words) * 2
+            words += new_words
 
+    # for label in labels:
+    #     print('{:s} : {:s}'.format(label, hex(labels[label])))
+
+    assert pc == pc_pre
     return words
 
 def region_size(instructions):
     size = 0
-    for name, smode, dmode, fields in instructions:
-        size += 2
-        if has_immediate(smode):
+    for args in instructions:
+        if isinstance(args, str):
+            # label, skip
+            continue
+        else:
+            name, smode, dmode, fields = args
             size += 2
-        if has_immediate(dmode):
-            size += 2
+            if has_immediate(smode):
+                size += 2
+            if has_immediate(dmode):
+                size += 2
 
     return size

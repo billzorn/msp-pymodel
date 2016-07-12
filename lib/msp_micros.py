@@ -1,6 +1,15 @@
+import utils
 import msp_assem as assem
 import msp_itable as itab
 import msp_fr5969_model as model
+from msp_isa import isa
+
+# so we can make unique strings
+idnum = 0
+def unique_id():
+    global idnum
+    idnum += 1
+    return 'id' + str(idnum)
 
 # There are several ways to perform a timer read:
 # First, we can read to a register. This has the least overhead,
@@ -63,6 +72,7 @@ def emit_init(start_timer=True):
         # disable watchdog
         ('MOV', '#N',   '&ADDR', {'isrc':0x5a80, 'idst':0x015c, 'bw':0}),
         ('JMP', 'none', 'none',  {'s':0, 'offset':1}),     # jump over halt
+        'HALT_FAIL',                                       # label
         ('JMP', 'none', 'none',  {'s':1, 'offset':0x3ff}), # halt to indicate failure
     ]
     if start_timer:
@@ -170,6 +180,14 @@ def iter_fmt1_ins():
         if name not in {'DADD'}:
             yield name
 
+def iter_fmt2_ins():
+    for name in sorted(itab.fmt2['instructions']):
+        yield name
+
+def iter_jump_ins():
+    for name in sorted(itab.jump['instructions']):
+        yield name
+
 def iter_to_depth(n):
     if n <= 0:
         yield []
@@ -181,7 +199,15 @@ def iter_to_depth(n):
                     for dmode, rdst in iter_fmt1_dst():
                         for bw in [0, 1]:
                             yield e + [(name, smode, dmode, rsrc, rdst, bw)]
-            # fmt2 and jumps will have to go here...
+            for name in iter_fmt2_ins():
+                # should be the same for both
+                for smode, rsrc in iter_fmt1_src():
+                    for bw in [0, 1]:
+                        yield e + [(name, smode, 'none', rsrc, -1, bw)]
+            for name in iter_jump_ins():
+                # here bw is actually taken
+                for bw in [0, 1]:
+                    yield e + [(name, 'none', 'none', -1, -1, bw)]
 
 def iter_offset(n):
     for name in iter_fmt1_ins():
@@ -204,10 +230,75 @@ def iter_reps(n):
 
 # Now we need to actually generate micros
 
+def prep_jump(info, name, taken):
+
+    info.add(uses=[2])
+    testname = 'test_{:s}_{:s}_{:s}'.format(name, 'taken' if taken else 'nottaken', unique_id())
+
+    if taken:
+        if   name == 'JNZ':
+            setup = [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
+        elif name == 'JZ':
+            setup = [('MOV', '#N', 'Rn', {'isrc':0x2, 'rdst':2, 'bw':0})]
+        elif name == 'JNC':
+            setup = [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
+        elif name == 'JC':
+            setup = [('MOV', '#N', 'Rn', {'isrc':0x1, 'rdst':2, 'bw':0})]
+        elif name == 'JN':
+            setup = [('MOV', '#N', 'Rn', {'isrc':0x4, 'rdst':2, 'bw':0})]
+        elif name == 'JGE':
+            setup = [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
+        elif name == 'JL':
+            setup = [('MOV', '#N', 'Rn', {'isrc':0x100, 'rdst':2, 'bw':0})]
+        elif name == 'JMP':
+            setup = []
+        else:
+            raise ValueError('Not a jump instruction: {:s}'.format(repr(name)))
+
+        bench = [
+            (name, 'none', 'none', {'s':0, 'offset':2}),                           # jump being measured
+            ('MOV', '#N', 'Rn', {'isrc':('LABEL','HALT_FAIL'), 'rdst':0, 'bw':0}), # goto fail
+        ]
+
+    else: # not taken
+        setup = [
+            ('JMP', 'none', 'none',  {'s':0, 'offset':2}),                         # jump over fail
+            testname + '_FAIL',                                                    # label
+            ('MOV', '#N', 'Rn', {'isrc':('LABEL','HALT_FAIL'), 'rdst':0, 'bw':0}), # goto fail
+        ]
+        if   name == 'JNZ':
+            setup += [('MOV', '#N', 'Rn', {'isrc':0x2, 'rdst':2, 'bw':0})]
+        elif name == 'JZ':
+            setup += [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
+        elif name == 'JNC':
+            setup += [('MOV', '#N', 'Rn', {'isrc':0x1, 'rdst':2, 'bw':0})]
+        elif name == 'JC':
+            setup += [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
+        elif name == 'JN':
+            setup += [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
+        elif name == 'JGE':
+            setup += [('MOV', '#N', 'Rn', {'isrc':0x100, 'rdst':2, 'bw':0})]
+        elif name == 'JL':
+            setup += [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
+        elif name == 'JMP':
+            raise ValueError('condition: cannot have a non-taken unconditional JMP')
+        else:
+            raise ValueError('Not a jump instruction: {:s}'.format(repr(name)))
+        
+        bench = [(name, 'none', 'none', {'s':     ('JSIGN',  testname + '_FAIL'),
+                                         'offset':('JLABEL', testname + '_FAIL')})]
+
+    return setup, bench
+
 # Generate necessary setup conditions and state dependencies
 def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
     
     setup = []
+    fmt = isa.name_to_fmt[name]
+
+    # special logic for jump instructions
+    if fmt == 'jump':
+        return prep_jump(info, name, (bw == 0))
     
     # hard coded
     saddr = 0x1c00
@@ -216,6 +307,17 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
     # will be updated if we need it for part of an address
     simm = 0x7777
     dimm = 0x8888
+
+    # special cases for fmt2
+    if name in {'PUSH'}:
+        info.add(uses=[1])
+        setup += [('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':1, 'bw':0})]
+    elif name in {'CALL', 'RETI'}:
+        raise ValueError('condition: {:s} unsupported'.format(name))
+        #TODO implement these
+    elif name in {'SWPB', 'SXT'} and bw == 1:
+        raise ValueError('condition: {:s} bw=1 unsupported'.format(name))
+        # undefined behavior
 
     # set up addressing for source mode
     if assem.uses_addr(smode, rsrc):
@@ -263,22 +365,35 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         else:
             assert False, 'unexpected address usage in dmode? {:s} {:d}'.format(dmode, rdst)
 
-    if dmode == 'Rn':
+    actual_dmode = dmode
+    actual_rdst = rdst
+    # whitelist some fmt2 instructions that behave like they have a destination
+    if name in {'RRC', 'SWPB', 'RRA', 'SXT'}:
+        actual_dmode = smode
+        actual_rdst = rsrc
+        # some fmt2 instructions have modes that are not well defined by the manual
+        if actual_dmode in {'#1', '#N', '#@N'} or assem.has_cg(actual_dmode, actual_rdst):
+            raise ValueError('condition: unsupported mode {:s} R{:d} for {:s}'
+                             .format(actual_dmode, actual_rdst, name))
+
+    if actual_dmode == 'Rn':
         # make sure value being put into destination is acceptable
-        if rdst == 2: # status register
+        if actual_rdst == 2: # status register
             if name not in {'CMP', 'BIT'}:
-                raise ValueError('condition: source mode not safe for SR: {:s} {:d}'
-                                 .format(smode, rsrc))
-        elif rdst == 0: # pc
+                raise ValueError('condition: dest mode not safe for SR: {:s} {:d}'
+                                 .format(actual_dmode, actual_rdst))
+        elif actual_rdst == 0: # pc
             if not name in {'CMP', 'BIT'}:
-                raise ValueError('condition: source mode not safe for PC: {:s} {:d}'
-                                 .format(smode, rsrc))
+                raise ValueError('condition: dest mode not safe for PC: {:s} {:d}'
+                                 .format(actual_dmode, actual_rdst))
         # just stubs for now
 
         # Otherwise add destination register to clobbers since we're writing to it.
         # I think this is all we need to do.
         else:
-            info.add(clobbers=[rdst])
+            info.add(clobbers=[actual_rdst])
+
+    
 
     # prepare fields
     fields = {'bw':bw}
@@ -305,7 +420,7 @@ def emit_micro(addr, codes, measure=True):
     # record dependencies: will need to be strengthened
     info = assem.Reginfo()
 
-    # sequences to emit... computing pc relative addresses is going to be gross
+    # sequences to emit
     measure_pre = []
     setup = []
     bench = []
@@ -338,7 +453,7 @@ def emit_micro(addr, codes, measure=True):
     for rn in info.clobbers:
         teardown.append(('MOV', 'Rn', 'Rn', {'rsrc':3, 'rdst':rn, 'bw':0}))
 
-    return measure_pre + setup + bench + measure_post + teardown
+    return setup + measure_pre + bench + measure_post + teardown
 
 # pack up executables from the provided generator of instruction codes
 def iter_states(codes_iterator, measure = True, verbosity = 0):
@@ -373,7 +488,7 @@ def iter_states(codes_iterator, measure = True, verbosity = 0):
                         print(e)
                     other_failures += 1
             continue
-        except Error as e:
+        except Exception as e:
             if verbosity >= 1:
                 if verbosity >= 2:
                     print(2)
@@ -452,23 +567,31 @@ def iter_states(codes_iterator, measure = True, verbosity = 0):
 
 
 if __name__ == '__main__':
+    import sys
+    import traceback
+    n = int(sys.argv[1])
+
     good = 0
     bad = 0
     err = 0
 
-    for codes in iter_to_depth(2):
+    for codes in iter_to_depth(n):
         print('-- {:s} --'.format(repr(codes)))
         try:
-            emit_micro(0, codes)
+            code = emit_micro(0, codes)
+            for instr_data in code:
+                print(repr(instr_data))
+            words = assem.assemble_symregion(code, 0x4400, {'HALT_FAIL':0x4000})
+            utils.printhex(words)
         except ValueError as e:
-            print(e)
+            traceback.print_exc()
             if str(e).startswith('condition'):
                 bad += 1
             elif str(e).startswith('conflict'):
                 bad += 1
             else:
                 err += 1
-        except Error as e:
+        except Exception as e:
             print(e)
             err += 1
         else:
