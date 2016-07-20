@@ -218,6 +218,17 @@ def iter_offset(n):
                     for i in range(n):
                         yield (([('MOV', 'Rn', 'Rn', 3, 3, 0)] * (n+1)) # NOP
                                + [(name, smode, dmode, rsrc, rdst, bw)])
+    for name in iter_fmt2_ins():
+        for smode, rsrc in iter_fmt1_src():
+            for bw in [0, 1]:
+                for i in range(n):
+                    yield (([('MOV', 'Rn', 'Rn', 3, 3, 0)] * (n+1)) # NOP
+                           + [(name, smode, 'none', rsrc, -1, bw)])
+    for name in iter_jump_ins():
+        for bw in [0, 1]:
+            for i in range(n):
+                yield (([('MOV', 'Rn', 'Rn', 3, 3, 0)] * (n+1)) # NOP
+                       + [(name, 'none', 'none', -1, -1, bw)])
 
 def iter_reps(n):
     for name in iter_fmt1_ins():
@@ -227,6 +238,15 @@ def iter_reps(n):
                 for bw in [0, 1]:
                     for i in range(n):
                         yield [(name, smode, dmode, rsrc, rdst, bw)] * (i+1)
+    for name in iter_fmt2_ins():
+        for smode, rsrc in iter_fmt1_src():
+            for bw in [0, 1]:
+                for i in range(n):
+                    yield [(name, smode, 'none', rsrc, -1, bw)] * (i+1)
+    for name in iter_jump_ins():
+        for bw in [0, 1]:
+            for i in range(n):
+                yield [(name, 'none', 'none', -1, -1, bw)] * (i+1)
 
 # Now we need to actually generate micros
 

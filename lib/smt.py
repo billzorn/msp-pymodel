@@ -20,9 +20,9 @@ def smt_iname(ins):
 def create_instr_datatype():
     Instruction = z3.Datatype('msp430_Instruction')
     for ins in isa.ids_ins:
-        # limit to fmt1 for now
-        if ins.fmt != 'fmt1':
-            continue
+        # # limit to fmt1 for now
+        # if ins.fmt != 'fmt1':
+        #     continue
         Instruction.declare(smt_iname(ins))
     #print(Instruction.constructors)
     return Instruction.create()
@@ -117,23 +117,39 @@ def solve_0(blocks):
 def create_ipreds():
     ipreds = {}
     for ins in isa.ids_ins:
-        if ins.fmt != 'fmt1':
-            continue
+        # if ins.fmt != 'fmt1':
+        #     continue
         ipreds[ins] = z3.Bool('p_' + smt_iname(ins))
     return ipreds
 
-def add_instr_constraint_0(ipreds, blacklist, solver, time_fn, inst_dt, block, cycles):
+# filter out some instructions with known behaviors
+def blacklist(ins, fields):
+    return any([
+        # read timer
+        (ins.name == 'MOV' and
+         ins.smode == '&ADDR' and
+         ins.dmode == 'Rn' and
+         fields['isrc'] == 0x0350),
+        # nop
+        (ins.name == 'MOV' and
+         ins.smode == 'Rn' and
+         ins.dmode == 'Rn' and
+         fields['rsrc'] == 3 and
+         fields['rdst'] == 3),
+    ])
+
+def add_instr_constraint_0(ipreds, solver, time_fn, inst_dt, block, cycles):
     times = []
-    insns = set()
+    preds = set()
     for fields in block:
         ins = isa.decode(fields['words'][0])
         iname = smt_iname(ins)
         times.append(time_fn(inst_dt.__dict__[iname]))
-        insns.add(ins)
+        if not blacklist(ins, fields):
+            preds.add(ipreds[ins])
 
-    preds = [ipreds[ins] for ins in insns if ins not in blacklist]
     solver.add(z3.Implies(z3.And(*preds), z3.Sum(times) == cycles))
-    return preds # probably not needed
+    return list(preds) # probably not needed
 
 def solve_instr_0(blocks):
     ipreds = create_ipreds()
@@ -142,26 +158,26 @@ def solve_instr_0(blocks):
     s = z3.Solver()
     predicates = list(ipreds.values())
 
-    # filter out instructions we know are common to all traces
-    mov_abs_rn = isa.modes_to_instr('fmt1', 'MOV', '&ADDR', 'Rn')
-    mov_imm_rn = isa.modes_to_instr('fmt1', 'MOV', '#N', 'Rn')
-    blacklist = [mov_abs_rn, mov_imm_rn]
-
+    n_constraints = 0
     for addr, block, difference in blocks:
         assert len(difference) == 2 and difference[1] == 0
         cycles = difference[0]
-        add_instr_constraint_0(ipreds, blacklist, s, time_fn, inst_dt, block, cycles)
+        add_instr_constraint_0(ipreds, s, time_fn, inst_dt, block, cycles)
+        n_constraints += 1
 
-    # should probably look at subsets, but all of these cores are single instruction for fmt1
+    #print(predicates)
+    print('generated {:d} constraints, solving...'.format(n_constraints))
+        
+    # should probably look at subsets
     while s.check(*predicates) == z3.unsat:
         core = s.unsat_core()
         print(core)
         for pred in core:
             predicates.remove(pred)
 
-    # m = s.model()
-    # for d in m:
-    #     print(d, m[d])
+    generated_fn = s.model()[time_fn]
+    z3.set_option(max_args=10000000, max_lines=1000000, max_depth=10000000, max_visited=1000000)
+    print(generated_fn)
 
 
 smt_rnames = {
@@ -180,8 +196,8 @@ def smt_rsrc(fields):
             return smt_rnames[r]
         elif 4 <= r and r < 16:
             return smt_rnames[4]
-        else:
-            return smt_rnames[-1]
+    else:
+        return smt_rnames[-1]
 
 def smt_rdst(fields):
     if 'rdst' in fields:
@@ -190,8 +206,8 @@ def smt_rdst(fields):
             return smt_rnames[r]
         elif 4 <= r and r < 16:
             return smt_rnames[4]
-        else:
-            return smt_rnames[-1]
+    else:
+        return smt_rnames[-1]
         
 def create_reg_datatype():
     Register = z3.Datatype('msp430_Register')
@@ -243,7 +259,7 @@ def add_constraint_1_0(ident, solver, time_macro, inst_dt, reg_dt, block, cycles
         ins = isa.decode(fields['words'][0])
         iname = smt_iname(ins)
         rname = smt_rsrc(fields)
-        times.append(time_macro(ins.smode, inst_dt.__dict__[iname], reg_dt.__dict__[rname]))
+        times.append(time_macro(ins.fmt, ins.smode, inst_dt.__dict__[iname], reg_dt.__dict__[rname]))
     solver.add(z3.Implies(p, z3.Sum(times) == cycles))
     return p
 
@@ -254,8 +270,8 @@ def solve_1_0(blocks):
     time_fn_1 = create_time_function_1(inst_dt, reg_dt)
     s = z3.Solver()
 
-    def time_macro(smode, inst_obj, reg_obj):
-        if smode in ['@Rn', '@Rn+']:
+    def time_macro(fmt, smode, inst_obj, reg_obj):
+        if fmt in {'fmt1'} and smode in {'@Rn', '@Rn+'}:
             return time_fn_1(inst_obj, reg_obj)
         else:
             return time_fn_0(inst_obj)

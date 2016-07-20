@@ -316,11 +316,11 @@ def main(args):
 
             #smt.solve_0(blocks)
 
-            #smt.solve_instr_0(blocks)
+            smt.solve_instr_0(blocks)
 
             #smt.solve_1(blocks)
 
-            smt.solve_1_0(blocks)
+            #smt.solve_1_0(blocks)
 
 if __name__ == '__main__':
     import argparse
