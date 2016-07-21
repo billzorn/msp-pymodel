@@ -1,3 +1,4 @@
+import msp_fr5969_model as model
 from msp_isa import isa
 
 # low level wrappers for isa methods
@@ -21,23 +22,47 @@ def assemble(name, smode, dmode, fields):
 # point.
 
 class Reginfo(object):
-    def __init__(self, uses = [], clobbers = []):
-        self.uses = set(uses)
+    def __init__(self, uses = {}, clobbers = []):
+        self.uses = uses
         self.clobbers = set(clobbers)
 
     def conflict(self, regs):
         for reg in regs:
-            if reg in self.uses or reg in self.clobbers:
+            if reg in self.uses:
+                return self.uses[reg]
+            elif reg in self.clobbers:
                 return True
         return False
 
-    def add(self, uses = [], clobbers = []):
+    def add(self, uses = {}, clobbers = []):
         for use in uses:
-            if use in self.uses or use in self.clobbers:
+            if use in self.uses:
                 raise ValueError('conflict: already using {:s}'.format(repr(use)))
-            self.uses.add(use)
+            self.uses[use] = uses[use]
         for clobber in clobbers:
             self.clobbers.add(clobber)
+
+    # returns the value if already set, and the check passes. if the check fails, raises
+    # an exception. returns false (and does't check!) if not already set.
+    def check_or_set_use(self, rn, pred, default):
+        if rn in self.uses:
+            if not pred(self.uses[rn]):
+                raise ValueError('conflict: predicate {:s} failed for {:x}: {:s}'
+                                 .format(repr(pred), rn, repr(self.uses[rn])))
+            return self.uses[rn]
+        else:
+            self.uses[rn] = default
+            return False
+
+    def overwrite_or_set_use(self, rn, x):
+        if rn in self.uses:
+            self.uses[rn] = x
+            # we did overwrite
+            return True
+        else:
+            self.uses[rn] = x
+            # set the value anyway
+            return False
 
 # helpful predicates:
 

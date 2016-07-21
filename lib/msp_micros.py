@@ -250,25 +250,52 @@ def iter_reps(n):
 
 # Now we need to actually generate micros
 
+def valid_readable_address(addr):
+    return (isinstance(addr, int) 
+            and ((model.ram_start <= addr and addr < model.ram_start + model.ram_size)
+                 or (model.fram_start <= addr and addr < model.fram_start + model.fram_size)))
+
+def valid_writable_address(addr):
+    return (isinstance(addr, int) 
+            and (model.ram_start <= addr and addr < model.ram_start + model.ram_size))
+
+def validator_if_needed(needed, x):
+    if needed:
+        def validate(y):
+            return y == x
+    else:
+        def validate(y):
+            return True
+    return validate
+
+# Helpers to provide safe source values for PC/SR operations
+#def
+
 def prep_jump(info, name, taken):
 
-    info.add(uses=[2])
     testname = 'test_{:s}_{:s}_{:s}'.format(name, 'taken' if taken else 'nottaken', unique_id())
 
     if taken:
         if   name == 'JNZ':
+            info.add(uses={2:0x0})
             setup = [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JZ':
+            info.add(uses={2:0x2})
             setup = [('MOV', '#N', 'Rn', {'isrc':0x2, 'rdst':2, 'bw':0})]
         elif name == 'JNC':
+            info.add(uses={2:0x0})
             setup = [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JC':
+            info.add(uses={2:0x1})
             setup = [('MOV', '#N', 'Rn', {'isrc':0x1, 'rdst':2, 'bw':0})]
         elif name == 'JN':
+            info.add(uses={2:0x4})
             setup = [('MOV', '#N', 'Rn', {'isrc':0x4, 'rdst':2, 'bw':0})]
         elif name == 'JGE':
+            info.add(uses={2:0x0})
             setup = [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JL':
+            info.add(uses={2:0x100})
             setup = [('MOV', '#N', 'Rn', {'isrc':0x100, 'rdst':2, 'bw':0})]
         elif name == 'JMP':
             setup = []
@@ -287,18 +314,25 @@ def prep_jump(info, name, taken):
             ('MOV', '#N', 'Rn', {'isrc':('LABEL','HALT_FAIL'), 'rdst':0, 'bw':0}), # goto fail
         ]
         if   name == 'JNZ':
+            info.add(uses={2:0x2})
             setup += [('MOV', '#N', 'Rn', {'isrc':0x2, 'rdst':2, 'bw':0})]
         elif name == 'JZ':
+            info.add(uses={2:0x0})
             setup += [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JNC':
+            info.add(uses={2:0x1})
             setup += [('MOV', '#N', 'Rn', {'isrc':0x1, 'rdst':2, 'bw':0})]
         elif name == 'JC':
+            info.add(uses={2:0x0})
             setup += [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JN':
+            info.add(uses={2:0x0})
             setup += [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JGE':
+            info.add(uses={2:0x100})
             setup += [('MOV', '#N', 'Rn', {'isrc':0x100, 'rdst':2, 'bw':0})]
         elif name == 'JL':
+            info.add(uses={2:0x0})
             setup += [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JMP':
             raise ValueError('condition: cannot have a non-taken unconditional JMP')
@@ -312,6 +346,9 @@ def prep_jump(info, name, taken):
 
 # Generate necessary setup conditions and state dependencies
 def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
+
+    testname = ('test_{:s}_{:s}_{:s}_{:d}_{:d}_{:s}'
+                .format(name, smode, dmode, rsrc, rdst, unique_id()))
     
     setup = []
     fmt = isa.name_to_fmt[name]
@@ -322,81 +359,169 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
     
     # hard coded
     saddr = 0x1c00
-    daddr = 0x1c02
+    daddr = 0x1c10
 
     # will be updated if we need it for part of an address
-    simm = 0x7777
-    dimm = 0x8888
+    simm = 0x1c20
+    dimm = 0x1c30
 
-    # special cases for fmt2
-    if name in {'PUSH'}:
-        info.add(uses=[1])
-        setup += [('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':1, 'bw':0})]
-    elif name in {'CALL', 'RETI'}:
+    # guaranteed to be used as data, changed to labels for call
+    sval = 0x1c40
+    dval = 0x1c50
+    # We WILL end up throwing this into the reginfo, even if it is written to some address
+    # somewhere.
+    # Also, note that it might become something fun like ('LABEL', 'longstring'),
+    # but that shouldn't be a problem.
+
+    # flags to indicate whether exact data is needed
+    require_source_data = False
+
+    # First, handle some special cases for fmt2
+    if name in {'PUSH', 'CALL'}:
+        if info.check_or_set_use(1, valid_writable_address, daddr) is False:
+            setup += [('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':1, 'bw':0})]
+    elif name in {'CALL'}:
+        sval = ('LABEL', testname + '_CALL')
+        require_source_data = True
+    elif name in {'RETI'}:
         raise ValueError('condition: {:s} unsupported'.format(name))
         #TODO implement these
     elif name in {'SWPB', 'SXT'} and bw == 1:
         raise ValueError('condition: {:s} bw=1 unsupported'.format(name))
         # undefined behavior
 
-    # set up addressing for source mode
-    if assem.uses_addr(smode, rsrc):
-        if smode in {'X(Rn)'}:
-            # could do something more intelligent and try to compute a valid offset
-            # from a known value of the register
-            assert rsrc not in {0, 2, 3}, 'invalid source mode: {:s} {:d}'.format(smode, rsrc)
-            info.add(uses=[rsrc])
-            # for now, move into the register, and use 0 offset...
-            setup.append(('MOV', '#N', 'Rn', {'isrc':saddr, 'rdst':rsrc, 'bw':0}))
-            simm = 0
-        elif smode in {'ADDR'}:
-            simm = ('PC_ABS', saddr) # assembler will resolve at assembly time
-        elif smode in {'&ADDR'}:
-            simm = saddr
-        elif smode in {'@Rn', '@Rn+'}:
-            assert rsrc not in {0, 2, 3}, 'not an indirect mode? {:s} {:d}'.format(smode, rsrc)
-            info.add(uses=[rsrc])
-            # move address into register
+    # We do the destination mode for fmt1 before the source mode, as it might determine
+    # what has to go in sval (for example, if our destination is PC or SR)
+    if   dmode in {'Rn'}:
+        # if rsrc in {0}:
+        #     assert not require_source_data
+        #     # TODO: force the right value into sval
+        #     require_source_data = True
+        # elif rsrc in {2}:
+        #     assert not require_source_data
+        #     # TODO: force the right value into sval
+        #     require_source_data = True
+        if info.check_or_set_use(rdst, validator_if_needed(False, dval), dval):
+            setup.append(('MOV', '#N', 'Rn', {'isrc':dval, 'rdst':rdst, 'bw':0}))
+    elif dmode in {'X(Rn)'}:
+        assert rdst not in {0, 2, 3}, 'invalid destination mode: {:s} {:d}'.format(smode, rdst)
+        # get the value in the register
+        known_daddr = info.check_or_set_use(rdst, valid_writable_address, daddr)
+        dimm = 0x0
+        # if it's not already set, set it, otherwise we might be able to be clever
+        if known_daddr is False:
+            setup.append(('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':rdst, 'bw':0}))
+        elif known_daddr == saddr:
+            dimm = 0x2
+            daddr = saddr + 0x2
+        else:
+            # remember new address
+            daddr = known_daddr
+        if info.check_or_set_use(daddr, validator_if_needed(False, dval), dval) is False:
+            setup.append(('MOV', '#N', '&ADDR', {'isrc':dval, 'idst':daddr, 'bw':0}))
+    elif dmode in {'ADDR'}:
+        dimm = ('PC_ABS', daddr)
+        if info.check_or_set_use(daddr, validator_if_needed(False, dval), dval) is False:
+            setup.append(('MOV', '#N', '&ADDR', {'isrc':dval, 'idst':daddr, 'bw':0}))
+    elif dmode in {'&ADDR'}:
+        dimm = daddr
+        if info.check_or_set_use(daddr, validator_if_needed(False, dval), dval) is False:
+            setup.append(('MOV', '#N', '&ADDR', {'isrc':dval, 'idst':daddr, 'bw':0}))
+    elif dmode in {'none'}:
+        pass
+    else:
+        assert False, 'unexpected address usage in dmode? {:s} {:d}'.format(dmode, rdst)
+
+    # Next, do setup for source mode, including addressing and value
+    if   smode in {'Rn'}:
+        if rsrc in {0}:
+            if not validator_if_needed(require_source_data, sval)(None):
+                raise ValueError('condition: PC holds wrong value for {:s} {:s} R{:d}'
+                                 .format(name, smode, rsrc))
+        elif rsrc in {2}:
+            v = info.conflict([2])
+            if v is False or v is True:
+                v = None
+            if not validator_if_needed(require_source_data, sval)(v):
+                raise ValueError('condition: SR holds wrong vaalue for {:s} {:s} R{:d}'
+                                 .format(name, smode, rsrc))
+        else:
+            if info.check_or_set_use(rsrc, 
+                                     validator_if_needed(require_source_data, sval), 
+                                     sval) is False:
+                # We look at the current value, and if it needs to be something specific and already
+                # isn't, we fail. Otherwise if it wasn't set, we set it.
+                setup.append(('MOV', '#N', 'Rn', {'isrc':sval, 'rdst':rsrc, 'bw':0}))
+    elif smode in {'X(Rn)'}:
+        assert rsrc not in {0, 2, 3}, 'invalid source mode: {:s} {:d}'.format(smode, rsrc)
+        # for now, move into the register, and use 0 offset...
+        known_saddr = info.check_or_set_use(rsrc, valid_readable_address, saddr)
+        simm = 0
+        if known_saddr is False:
             setup.append(('MOV', '#N', 'Rn', {'isrc':saddr, 'rdst':rsrc, 'bw':0}))
         else:
-            assert False, 'unexpected address usage in smode? {:s} {:d}'.format(smode, rsrc)
-
-    # set up addressing for destination mode
-    if assem.uses_addr(dmode, rdst):
-        if dmode in {'X(Rn)'}:
-            assert rdst not in {0, 2, 3}, 'invalid destination mode: {:s} {:d}'.format(smode, rdst)
-            # this is ugly
-            if info.conflict([rdst]):
-                if rsrc == rdst and assem.uses_addr(smode, rsrc):
-                    # we know the conflict was from this (otherwise we'd have hit a conflict
-                    # while setting up the source)
-                    dimm = 0x2 # we know rdst holds saddr, this gets us to daddr
-                else:
-                    raise ValueError('conflict: unable to set or determine value in register {:d}'
-                                     .format(rdst))
+            # remember new address
+            saddr = known_saddr
+        if info.check_or_set_use(saddr, 
+                                 validator_if_needed(require_source_data, sval), 
+                                 sval) is False:
+            setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+    elif smode in {'ADDR'}:
+        simm = ('PC_ABS', saddr)
+        if info.check_or_set_use(saddr, 
+                                 validator_if_needed(require_source_data, sval), 
+                                 sval) is False:
+            setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+    elif smode in {'&ADDR'}:
+        simm = saddr
+        if info.check_or_set_use(saddr, 
+                                 validator_if_needed(require_source_data, sval), 
+                                 sval) is False:
+            setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+    elif smode in {'@Rn', '@Rn+'}:
+        assert rsrc not in {0}, 'invalid source mode: {:s} {:d}'.format(smode, rsrc)
+        cg_value = assem.has_cg(smode, rsrc)
+        if cg_value is not None:
+            if not validator_if_needed(require_source_data, sval)(cg_value):
+                raise ValueError('condition: CG provides wrong value for {:s} {:s} R{:d}'
+                                 .format(name, smode, rsrc))
+        else:
+            known_saddr = info.check_or_set_use(rsrc, valid_readable_address, saddr)
+            if known_saddr is False:
+                setup.append(('MOV', '#N', 'Rn', {'isrc':saddr, 'rdst':rsrc, 'bw':0}))
             else:
-                info.add(uses=[rdst])
-                setup.append(('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':rdst, 'bw':0}))
-                dimm = 0
-        elif dmode in {'ADDR'}:
-            dimm = ('PC_ABS', daddr) # let assembler resolve
-        elif dmode in {'&ADDR'}:
-            dimm = daddr
-        else:
-            assert False, 'unexpected address usage in dmode? {:s} {:d}'.format(dmode, rdst)
+                # remember new address
+                saddr = known_saddr
+            if info.check_or_set_use(saddr,
+                                     validator_if_needed(require_source_data, sval),
+                                     sval) is False:
+                setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+    elif smode in {'#@N', '#N'}:
+        simm = sval
+    elif smode in {'#1'}:
+        if not validator_if_needed(require_source_data, sval)(1):
+            raise ValueError('condition: CG provides wrong value for {:s} {:s} R{:d}'
+                             .format(name, smode, rsrc))
+    else:
+        assert False, 'unexpected smode? {:s} R{:d}'.format(smode, rsrc)
 
+    # Finally, we have to take into account what happens to the destination after we execute the
+    # instruction.
+    
     actual_dmode = dmode
     actual_rdst = rdst
+    actual_daddr = daddr
     # whitelist some fmt2 instructions that behave like they have a destination
     if name in {'RRC', 'SWPB', 'RRA', 'SXT'}:
         actual_dmode = smode
         actual_rdst = rsrc
+        actual_daddr = daddr
         # some fmt2 instructions have modes that are not well defined by the manual
         if actual_dmode in {'#1', '#N', '#@N'} or assem.has_cg(actual_dmode, actual_rdst):
             raise ValueError('condition: unsupported mode {:s} R{:d} for {:s}'
                              .format(actual_dmode, actual_rdst, name))
 
-    if actual_dmode == 'Rn':
+    if actual_dmode in {'Rn'}:
         # make sure value being put into destination is acceptable
         if actual_rdst == 2: # status register
             if name not in {'CMP', 'BIT'}:
@@ -411,9 +536,20 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         # Otherwise add destination register to clobbers since we're writing to it.
         # I think this is all we need to do.
         else:
+            info.overwrite_or_set_use(actual_rdst, None)
+            # by default, just clobber the register and claim that it holds None,
+            # which is basically a placeholder for undefined. In general we could
+            # figure out what value will actually be there after executing the
+            # instruction, but that isn't supported yet.
             info.add(clobbers=[actual_rdst])
-
-    
+    elif assem.uses_addr(actual_dmode, actual_rdst):
+        # trust that the address we have is correct
+        info.overwrite_or_set_use(actual_daddr, None)
+        info.add(clobbers=[actual_daddr])
+    elif actual_dmode in {'none'}:
+        pass
+    else:
+        assert False, 'unexpected apparent dmode? {:s} R{:d}'.format(actual_dmode, actual_rdst)
 
     # prepare fields
     fields = {'bw':bw}
@@ -428,7 +564,11 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
     if assem.has_immediate(dmode):
         fields['idst'] = dimm
 
-    return setup, [(name, smode, dmode, fields)]
+    bench = [(name, smode, dmode, fields)]
+    if name in {'CALL'}:
+        bench.append(testname + '_CALL')
+
+    return setup, bench
 
 # addr is the base pc at which the text of this micro will start
 # codes is a list of instructions to put in between the measurements:
@@ -438,8 +578,11 @@ def emit_micro(addr, codes, measure=True):
     timer_r2 = 15
 
     # record dependencies: will need to be strengthened
-    info = assem.Reginfo()
-
+    # Also, for reasons that appear to me to be a major bug in Python3, if you don't pass
+    # the explicit intial empty uses and clobbers, uses will magically contain {14:None}
+    # when the Reginfo object is created, and all hell will break loose.
+    info = assem.Reginfo(uses={}, clobbers=[])
+    
     # sequences to emit
     measure_pre = []
     setup = []
@@ -447,7 +590,7 @@ def emit_micro(addr, codes, measure=True):
     measure_post = []
 
     if measure:
-        info.add(uses=[timer_r1], clobbers=[timer_r1])
+        info.add(uses={timer_r1:None}, clobbers=[timer_r1])
         measure_pre += emit_timer_read_rn(timer_r1)
 
     # the tricky things are:
@@ -464,14 +607,17 @@ def emit_micro(addr, codes, measure=True):
         bench += local_bench
 
     if measure:
-        info.add(uses=[timer_r2], clobbers=[timer_r2, 2])
+        info.add(uses={timer_r2:None}, clobbers=[timer_r2, 2])
         measure_post += emit_timer_read_rn(timer_r2)
         measure_post += emit_timer_compute_store(timer_r1, timer_r2, addr)
 
     teardown = []
     # reset all registers that might have unknown state
     for rn in info.clobbers:
-        teardown.append(('MOV', 'Rn', 'Rn', {'rsrc':3, 'rdst':rn, 'bw':0}))
+        if 0 <= rn and rn < model.reg_size:
+            teardown.append(('MOV', 'Rn', 'Rn', {'rsrc':3, 'rdst':rn, 'bw':0}))
+        else:
+            teardown.append(('MOV', 'Rn', '&ADDR', {'rsrc':3, 'idst':rn, 'bw':0}))
 
     return setup + measure_pre + bench + measure_post + teardown
 
@@ -599,10 +745,10 @@ if __name__ == '__main__':
         print('-- {:s} --'.format(repr(codes)))
         try:
             code = emit_micro(0, codes)
-            for instr_data in code:
-                print(repr(instr_data))
-            words = assem.assemble_symregion(code, 0x4400, {'HALT_FAIL':0x4000})
-            utils.printhex(words)
+            # for instr_data in code:
+            #     print(repr(instr_data))
+            # words = assem.assemble_symregion(code, 0x4400, {'HALT_FAIL':0x4000})
+            # utils.printhex(words)
         except ValueError as e:
             traceback.print_exc()
             if str(e).startswith('condition'):
@@ -612,7 +758,7 @@ if __name__ == '__main__':
             else:
                 err += 1
         except Exception as e:
-            print(e)
+            traceback.print_exc()
             err += 1
         else:
             good += 1
