@@ -121,6 +121,8 @@ def writefields_call(state, fields):
     return
 
 def execute_reti(fields):
+    if fields['bw'] == 1:
+        raise base.UnknownBehavior('RETI.B == CALLA')
     return
 
 def writefields_reti(state, fields):

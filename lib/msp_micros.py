@@ -407,9 +407,14 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         require_source_data = True
         generate_post_label = True
     if name in {'RETI'}:
+        #
+        if not (smode == 'Rn' and rsrc == 0):
+            raise ValueError('condition: {:s} {:s} R{:d} unsupported, use {:s} Rn R0'
+                             .format(name, smode, rsrc, name))
         # We need to be sure nobody is using R1 at all, otherwise a PUSH
         # instruction that we've already decided to emit could throw everything
-        # way off.
+        # way off. Unfortunately this prevents us from testing multiple
+        # in a row.
         if info.conflict([1]) is False:
             info.add(uses={1:None})
             setup += [
@@ -420,7 +425,7 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             generate_post_label = True
         else:
             raise ValueError('conflict: already using R1, cannot reserve for RETI.')
-    if name in {'SWPB', 'SXT', 'CALL'} and bw == 1:
+    if name in {'SWPB', 'SXT', 'CALL', 'RETI'} and bw == 1:
         raise ValueError('condition: {:s} bw=1 unsupported'.format(name))
         # undefined behavior
 
@@ -798,10 +803,10 @@ if __name__ == '__main__':
         print('-- {:s} --'.format(repr(codes)))
         try:
             code = emit_micro(0, codes)
-            for instr_data in code:
-                print(repr(instr_data))
-            words = assem.assemble_symregion(code, 0x4400, {'HALT_FAIL':0x4000})
-            utils.printhex(words)
+            # for instr_data in code:
+            #     print(repr(instr_data))
+            # words = assem.assemble_symregion(code, 0x4400, {'HALT_FAIL':0x4000})
+            # utils.printhex(words)
         except ValueError as e:
             traceback.print_exc()
             if str(e).startswith('condition'):
