@@ -120,7 +120,7 @@ run_interval = 1
 run_passes = 3
 
 def check_elf(elfname):
-    mulator = Emulator(verbosity=0, tracing=False)
+    mulator = Emulator(verbosity=0, tracing=True)
     mulator.prog(elfname)
 
     fram_end = mulator.md(model.upper_start - 256, 256)

@@ -1,6 +1,7 @@
 # methods for defining fmt1 instructions
 
 import msp_base as base
+import msp_fr5969_model as model
 import msp_instr as instr
 import msp_addr as addr
 import msp_arith as arith

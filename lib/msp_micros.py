@@ -268,8 +268,28 @@ def validator_if_needed(needed, x):
             return True
     return validate
 
-# Helpers to provide safe source values for PC/SR operations
-#def
+# Helpers to provide safe source values for PC/SR operations.
+# Assumes carry bit is 0. Go read the description of the SUBC instruction
+# to see why the correct value is -1.
+def get_fmt1_identity(name):
+    if   name in {'MOV', 'DADD'}:
+        return None
+    elif name in {'ADD', 'ADDC', 'SUB', 'BIC', 'BIS', 'XOR'}:
+        return 0
+    elif name in {'SUBC', 'AND'}:
+        return 0xffff #TODO: only 16 bits
+    else:
+        raise ValueError('no fmt1 identity: {:s}'.format(name))
+
+def is_fmt1_identity(name, x):
+    try:
+        identity_value = get_fmt1_identity(name)
+    except ValueError:
+        return False
+    if identity_value is None:
+        return False
+    else:
+        return x == identity_value
 
 def prep_jump(info, name, taken):
 
@@ -375,33 +395,52 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
 
     # flags to indicate whether exact data is needed
     require_source_data = False
+    generate_post_label = False
 
     # First, handle some special cases for fmt2
     if name in {'PUSH', 'CALL'}:
         if info.check_or_set_use(1, valid_writable_address, daddr) is False:
             setup += [('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':1, 'bw':0})]
-    elif name in {'CALL'}:
-        sval = ('LABEL', testname + '_CALL')
+    if name in {'CALL'}:
+        assert not require_source_data
+        sval = ('LABEL', testname + '_POST')
         require_source_data = True
-    elif name in {'RETI'}:
-        raise ValueError('condition: {:s} unsupported'.format(name))
-        #TODO implement these
-    elif name in {'SWPB', 'SXT'} and bw == 1:
+        generate_post_label = True
+    if name in {'RETI'}:
+        # We need to be sure nobody is using R1 at all, otherwise a PUSH
+        # instruction that we've already decided to emit could throw everything
+        # way off.
+        if info.conflict([1]) is False:
+            info.add(uses={1:None})
+            setup += [
+                ('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':1, 'bw':0}),
+                ('PUSH', '#N', 'none', {'isrc':('LABEL', testname + '_POST'), 'bw':0}),
+                ('PUSH', 'Rn', 'none', {'rsrc':3, 'bw':0}),
+            ]
+            generate_post_label = True
+        else:
+            raise ValueError('conflict: already using R1, cannot reserve for RETI.')
+    if name in {'SWPB', 'SXT', 'CALL'} and bw == 1:
         raise ValueError('condition: {:s} bw=1 unsupported'.format(name))
         # undefined behavior
 
     # We do the destination mode for fmt1 before the source mode, as it might determine
     # what has to go in sval (for example, if our destination is PC or SR)
     if   dmode in {'Rn'}:
-        # if rsrc in {0}:
-        #     assert not require_source_data
-        #     # TODO: force the right value into sval
-        #     require_source_data = True
-        # elif rsrc in {2}:
-        #     assert not require_source_data
-        #     # TODO: force the right value into sval
-        #     require_source_data = True
-        if info.check_or_set_use(rdst, validator_if_needed(False, dval), dval):
+        if rdst in {0, 2}:
+            # we still want to assert even if we don't need to set a specific source value
+            assert not require_source_data
+            # MOV has no identity, we need to special case in a label
+            if name in {'MOV'}:
+                sval = ('LABEL', testname + '_POST')
+                require_source_data = True
+                generate_post_label = True
+            # otherwise pick a source value that will
+            elif assem.modifies_destination(name):
+                sval = get_fmt1_identity(name)
+                assert sval is not None
+                require_source_data = True
+        elif info.check_or_set_use(rdst, validator_if_needed(False, dval), dval) is False:
             setup.append(('MOV', '#N', 'Rn', {'isrc':dval, 'rdst':rdst, 'bw':0}))
     elif dmode in {'X(Rn)'}:
         assert rdst not in {0, 2, 3}, 'invalid destination mode: {:s} {:d}'.format(smode, rdst)
@@ -434,18 +473,28 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
 
     # Next, do setup for source mode, including addressing and value
     if   smode in {'Rn'}:
+        # we can't control the PC value
         if rsrc in {0}:
             if not validator_if_needed(require_source_data, sval)(None):
                 raise ValueError('condition: PC holds wrong value for {:s} {:s} R{:d}'
                                  .format(name, smode, rsrc))
+        # we might be able to control the SR value, currently not well supported though
         elif rsrc in {2}:
             v = info.conflict([2])
             if v is False or v is True:
                 v = None
             if not validator_if_needed(require_source_data, sval)(v):
-                raise ValueError('condition: SR holds wrong vaalue for {:s} {:s} R{:d}'
+                raise ValueError('condition: SR holds wrong value for {:s} {:s} R{:d}'
+                                 .format(name, smode, rsrc))
+        elif assem.has_cg(smode, rsrc) or assem.has_cg(smode, rsrc) == 0:
+            cg_value = assem.has_cg(smode, rsrc)
+            if not validator_if_needed(require_source_data, sval)(cg_value):
+                raise ValueError('condition: GC provides wrong value for {:s} {:s} R{:d}'
                                  .format(name, smode, rsrc))
         else:
+
+            
+
             if info.check_or_set_use(rsrc, 
                                      validator_if_needed(require_source_data, sval), 
                                      sval) is False:
@@ -523,16 +572,17 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
 
     if actual_dmode in {'Rn'}:
         # make sure value being put into destination is acceptable
-        if actual_rdst == 2: # status register
-            if name not in {'CMP', 'BIT'}:
-                raise ValueError('condition: dest mode not safe for SR: {:s} {:d}'
-                                 .format(actual_dmode, actual_rdst))
-        elif actual_rdst == 0: # pc
-            if not name in {'CMP', 'BIT'}:
-                raise ValueError('condition: dest mode not safe for PC: {:s} {:d}'
-                                 .format(actual_dmode, actual_rdst))
-        # just stubs for now
-
+        if actual_rdst in {0, 2}:
+            if actual_rdst in {0} and bw == 1:
+                raise ValueError('condition: must use bw=0 when operating on PC')
+            if name in {'MOV'}:
+                if not sval == ('LABEL', testname + '_POST'):
+                    raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
+                                     .format(repr(sval), name, actual_dmode, actual_rdst))
+            elif assem.modifies_destination(name):
+                if not is_fmt1_identity(name, sval):
+                    raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
+                                     .format(repr(sval), name, actual_dmode, actual_rdst))
         # Otherwise add destination register to clobbers since we're writing to it.
         # I think this is all we need to do.
         else:
@@ -551,6 +601,9 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
     else:
         assert False, 'unexpected apparent dmode? {:s} R{:d}'.format(actual_dmode, actual_rdst)
 
+    if assem.modifies_sr(name):
+        info.add(clobbers=[2])
+
     # prepare fields
     fields = {'bw':bw}
     if assem.has_reg(smode):
@@ -565,8 +618,8 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         fields['idst'] = dimm
 
     bench = [(name, smode, dmode, fields)]
-    if name in {'CALL'}:
-        bench.append(testname + '_CALL')
+    if generate_post_label:
+        bench.append(testname + '_POST')
 
     return setup, bench
 
@@ -745,10 +798,10 @@ if __name__ == '__main__':
         print('-- {:s} --'.format(repr(codes)))
         try:
             code = emit_micro(0, codes)
-            # for instr_data in code:
-            #     print(repr(instr_data))
-            # words = assem.assemble_symregion(code, 0x4400, {'HALT_FAIL':0x4000})
-            # utils.printhex(words)
+            for instr_data in code:
+                print(repr(instr_data))
+            words = assem.assemble_symregion(code, 0x4400, {'HALT_FAIL':0x4000})
+            utils.printhex(words)
         except ValueError as e:
             traceback.print_exc()
             if str(e).startswith('condition'):

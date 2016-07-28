@@ -121,6 +121,20 @@ def uses_reg(mode, rn):
     else:
         raise ValueError('not an addressing mode: {:s}'.format(mode))
 
+def modifies_destination(name):
+    if name in {'MOV', 'ADD', 'ADDC', 'SUBC', 'SUB', 'DADD', 'BIC', 'BIS', 'XOR', 'AND',
+                'RRC', 'SWPB', 'RRA', 'SXT'}:
+        return True
+    else:
+        return False
+
+def modifies_sr(name):
+    if name in {'ADD', 'ADDC', 'SUBC', 'SUB', 'CMP', 'DADD', 'BIT', 'XOR', 'AND',
+                'RRC', 'RRA', 'RETI', 'SXT'}:
+        return True
+    else:
+        return False
+
 # assembly with dynamic computation of symbols
 def assemble_sym(name, smode, dmode, symfields, pc, labels):
     fields = {}
