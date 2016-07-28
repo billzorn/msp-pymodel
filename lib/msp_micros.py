@@ -437,7 +437,10 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             assert not require_source_data
             # MOV has no identity, we need to special case in a label
             if name in {'MOV'}:
-                sval = ('LABEL', testname + '_POST')
+                if rdst == 0:
+                    sval = ('LABEL', testname + '_POST')
+                else:
+                    sval = 0
                 require_source_data = True
                 generate_post_label = True
             # otherwise pick a source value that will
@@ -494,7 +497,7 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         elif assem.has_cg(smode, rsrc) or assem.has_cg(smode, rsrc) == 0:
             cg_value = assem.has_cg(smode, rsrc)
             if not validator_if_needed(require_source_data, sval)(cg_value):
-                raise ValueError('condition: GC provides wrong value for {:s} {:s} R{:d}'
+                raise ValueError('condition: CG provides wrong value for {:s} {:s} R{:d}'
                                  .format(name, smode, rsrc))
         else:
 
@@ -546,10 +549,17 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             else:
                 # remember new address
                 saddr = known_saddr
+            # set and record sval
             if info.check_or_set_use(saddr,
                                      validator_if_needed(require_source_data, sval),
                                      sval) is False:
                 setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+            # we need to do something here if we're autoincrementing
+            if smode in {'@Rn+'}:
+                increment_size = 1
+                if rsrc == 1 or bw == 0:
+                    increment_size = 2
+                info.overwrite_or_set_use(rsrc, saddr + increment_size)
     elif smode in {'#@N', '#N'}:
         simm = sval
     elif smode in {'#1'}:
@@ -578,12 +588,18 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
     if actual_dmode in {'Rn'}:
         # make sure value being put into destination is acceptable
         if actual_rdst in {0, 2}:
-            if actual_rdst in {0} and bw == 1:
+            if assem.modifies_destination(name) and actual_rdst in {0} and bw == 1:
                 raise ValueError('condition: must use bw=0 when operating on PC')
             if name in {'MOV'}:
-                if not sval == ('LABEL', testname + '_POST'):
-                    raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
-                                     .format(repr(sval), name, actual_dmode, actual_rdst))
+                if rdst == 0:
+                    if not sval == ('LABEL', testname + '_POST'):
+                        raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
+                                         .format(repr(sval), name, actual_dmode, actual_rdst))
+                # could have a special check for valid SR values
+                else:
+                    if not sval == 0:
+                        raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
+                                         .format(repr(sval), name, actual_dmode, actual_rdst))
             elif assem.modifies_destination(name):
                 if not is_fmt1_identity(name, sval):
                     raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'

@@ -120,7 +120,7 @@ run_interval = 1
 run_passes = 3
 
 def check_elf(elfname):
-    mulator = Emulator(verbosity=0, tracing=True)
+    mulator = Emulator(verbosity=1, tracing=True)
     mulator.prog(elfname)
 
     fram_end = mulator.md(model.upper_start - 256, 256)
@@ -267,7 +267,8 @@ def walk_micros(testdir, check, execute, suffix = '.elf',):
                 if check:
                     if not check_elf(elfpath):
                         print('Unexpected behavior! {:s}'.format(elfpath))
-                        continue
+                        #continue
+                        break
                 if execute:
                     try:
                         trace_elf(elfpath, jpath)
