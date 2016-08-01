@@ -625,6 +625,10 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
     if assem.modifies_sr(name):
         info.add(clobbers=[2])
 
+    # hack, instructions that modify the SP force the value to unknown afterwards
+    if name in {'PUSH', 'CALL', 'RETI'}:
+        info.overwrite_or_set_use(1, None)
+
     # prepare fields
     fields = {'bw':bw}
     if assem.has_reg(smode):
@@ -780,6 +784,10 @@ def iter_states(codes_iterator, measure = True, verbosity = 0):
             current_size += rsize
 
     if len(current_region) > 0:
+        start_pc = current_addr
+        if start_pc % 2 == 1:
+            start_pc += 1
+
         words = assem.assemble_symregion(header_region + current_region, start_pc)
         assert len(words) * 2 == header_size + current_size
 
