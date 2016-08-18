@@ -5,7 +5,9 @@
 import sys
 import os
 import json
+import codecs
 import traceback
+import multiprocessing
 
 libdir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib')
 sys.path.append(libdir)
@@ -119,8 +121,8 @@ run_max_steps = 10000
 run_interval = 1
 run_passes = 3
 
-def check_elf(elfname):
-    mulator = Emulator(verbosity=0, tracing=True)
+def check_elf(elfname, verbosity = 0):
+    mulator = Emulator(verbosity=verbosity, tracing=True)
     mulator.prog(elfname)
 
     fram_end = mulator.md(model.upper_start - 256, 256)
@@ -141,13 +143,15 @@ def check_elf(elfname):
                     print('Invalid run write to reserved fram region:')
                     print(utils.triple_summarize(fram_end, model.upper_start - 256))
                     return False
+            if verbosity >= 0:
+                print('  checked {:s}, pass'.format(elfname))
             return True
 
     return False
 
-def trace_elf(elfname, jname):
-    with MSPdebug(verbosity=0) as driver:
-        mulator = Emulator(verbosity=0, tracing=True)
+def trace_elf(elfname, jname, verbosity = 0):
+    with MSPdebug(verbosity=verbosity) as driver:
+        mulator = Emulator(verbosity=verbosity, tracing=True)
         mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
         cosim = Cosim([driver, mulator], [True, False], mmap)
         master_idx = 0
@@ -159,13 +163,20 @@ def trace_elf(elfname, jname):
         trace = mulator.trace
         iotrace = mulator.iotrace2
 
-    with open(jname, 'wt') as f:
-        json.dump({'diff':diff, 'trace':trace, 'iotrace':iotrace}, f)
+    with utils.Write7z(jname) as f:
+        writer = codecs.getwriter('utf-8')
+        json.dump({'diff':diff, 'trace':trace, 'iotrace':iotrace}, writer(f))
+
+    if verbosity >= 0:
+        print('  traced {:s} to {:s}'.format(elfname, jname))
 
 def load_trace(jname):
-    with open(jname, 'rt') as f:
-        jobj = json.load(f)
+    with utils.Read7z(jname) as f:
+        reader = codecs.getreader('utf-8')
+        jobj = json.load(reader(f))
     return jobj['diff'], jobj['trace'], jobj['iotrace']
+
+trace_suffix = '.trace.json.7z'
 
 def compute_mismatches(diff):
     mismatches = {}
@@ -227,6 +238,15 @@ def create_arff(blocks, arffname):
 
             f.write(arff_entry(indices, cycles) + '\n')
 
+def create_json(blocks, jname):
+    with open(jname, 'wt') as f:
+        json.dump({'blocks':blocks}, f)
+
+def extract_json(jname):
+    with open(jname, 'rt') as f:
+        jobj = json.load(f)
+    return jobj['blocks']
+
 def create_smt(blocks, smtname):
     with open(smtname, 'wt') as f:
 
@@ -250,48 +270,109 @@ def create_smt_string(blocks):
     #s += '\n' + smt_footer()
     return s
 
-def walk_micros(testdir, check, execute, suffix = '.elf',):
+def walk_par(fn, targetdir, cargs, n_procs = 1, verbosity = 0):
     roots = set()
-    for root, dirs, files in os.walk(testdir, followlinks=True):
+    worklists = [(i, [], cargs) for i in range(n_procs)]
+    i = 0
+    for root, dirs, files in os.walk(targetdir, followlinks=True):
         if root in roots:
             del dirs[:]
             continue
         else:
             roots.add(root)
-
         for fname in files:
-            if fname.endswith(suffix):
-                name = fname[:-len(suffix)]
-                elfpath = os.path.join(root, fname)
-                jpath = os.path.join(root, name + '.json')
-                if check:
-                    if not check_elf(elfpath):
-                        print('Unexpected behavior! {:s}'.format(elfpath))
-                        #continue
+            worklists[i%n_procs][1].append((root, fname))
+            i += 1
+
+    if verbosity >= 0:
+        if n_procs == 1:
+            print('found {:d} files under {:s}, running on main process'
+                  .format(i, targetdir))
+        else:
+            print('found {:d} files under {:s}, splitting across {:d} processes'
+                  .format(i, targetdir, n_procs))
+
+    if n_procs == 1:
+        return fn(worklists[0])
+    else:
+        pool = multiprocessing.Pool(processes=n_procs)
+        return pool.map(fn, worklists)
+        # results = pool.map(fn, worklists)
+        # return [result for sublist in results for result in sublist]
+
+def process_micros(args):
+    (k, files, (check, execute, suffix, abort_on_error, verbosity)) = args
+    i = 0
+
+    for root, fname in files:
+        if fname.endswith(suffix):
+            i += 1
+            name = fname[:-len(suffix)]
+            elfpath = os.path.join(root, fname)
+            jpath = os.path.join(root, name + trace_suffix)
+            if check:
+                if not check_elf(elfpath, verbosity=verbosity):
+                    print('Unexpected behavior! {:s}'.format(elfpath))
+                    if abort_on_error:
                         break
-                if execute:
-                    try:
-                        trace_elf(elfpath, jpath)
-                    except Exception:
-                        traceback.print_exc()
+                    else:
+                        continue
+            if execute:
+                assert k == 0, 'microbenchmark execution only supports one process'
+                try:
+                    trace_elf(elfpath, jpath, verbosity=verbosity)
+                except Exception:
+                    traceback.print_exc()
+                    if abort_on_error:
+                        break
 
-def walk_traces(testdir):
+    if verbosity >= 0:
+        print('processed {:d} microbenchmarks, done'.format(i))
+    return i
+
+def walk_micros(testdir, check, execute, suffix = '.elf', abort_on_error = True,
+                verbosity = 0, n_procs = 1):
+    if execute and n_procs != 1:
+        print('Warning: microbenchmark execution only supports one process, using n_procs=1')
+        n_procs = 1
+
+    counts = walk_par(process_micros, testdir, (check, execute, suffix, abort_on_error, verbosity),
+                      n_procs=n_procs, verbosity=verbosity)
+
+    if n_procs > 1 and verbosity >= 0:
+        print('dispatched to {:d} cores, processed {:d} total microbenchmarks'
+              .format(n_procs, sum(counts)))
+
+def process_traces(args):
+    (k, files, (verbosity,)) = args
+    i = 0
     blocks = []
-    roots = set()
-    for root, dirs, files in os.walk(testdir, followlinks=True):
-        if root in roots:
-            del dirs[:]
-            continue
-        else:
-            roots.add(root)
 
-        for fname in files:
-            if fname.endswith('.json'):
-                jname = os.path.join(root, fname)
-                diff, trace, iotrace = load_trace(jname)
-                mismatches = compute_mismatches(diff)
-                mismatches_to_blocks(trace, mismatches, blocks)
+    for root, fname in files:
+        if fname.endswith(trace_suffix):
+            i += 1
+            jname = os.path.join(root, fname)
+            diff, trace, iotrace = load_trace(jname)
+            mismatches = compute_mismatches(diff)
+            mismatches_to_blocks(trace, mismatches, blocks)
 
+    if verbosity >= 0:
+        print('processed {:d} traces to {:d} observed blocks, done'.format(i, len(blocks)))
+    return i, blocks
+
+def walk_traces(testdir, verbosity = 0, n_procs = 1):
+    results = walk_par(process_traces, testdir, (verbosity,),
+                       n_procs=n_procs, verbosity=verbosity)
+
+    count = 0
+    blocks = []
+    for i, subblocks in results:
+        count += i
+        blocks += subblocks
+
+    if n_procs > 1 and verbosity >= 0:
+        print('dispatched to {:d} cores, processed {:d} total traces to {:d} blocks'
+              .format(n_procs, count, len(blocks)))
     return blocks
 
 def main(args):
@@ -299,17 +380,31 @@ def main(args):
     suffix = args.suffix
     check = args.check
     execute = args.execute
+    jname = args.json
     arffname = args.arff
     smtround = args.smt
+    n_procs = args.ncores
+    abort_on_error = not args.noabort
+    verbosity = args.verbose
 
     if check or execute:
-        walk_micros(testdir, check, execute, suffix=suffix)
+        walk_micros(testdir, check, execute, suffix=suffix, abort_on_error=abort_on_error,
+                    n_procs=n_procs, verbosity=verbosity)
 
-    if arffname or smtround:
-        blocks = walk_traces(testdir)
+    if jname or arffname or smtround > 0:
+        if jname:
+            if os.path.exists(jname):
+                blocks = extract_json(jname)
+            else:
+                blocks = walk_traces(testdir, verbosity=verbosity, n_procs=n_procs)
+                create_json(blocks, jname)
+        else:
+            blocks = walk_traces(testdir, verbosity=verbosity, n_procs=n_procs)
+
         if arffname:
             create_arff(blocks, arffname)
-        if smtname:
+
+        if smtround > 0:
             # create_smt(blocks, smtname)
 
             #formula = create_smt_string(blocks)
@@ -335,10 +430,18 @@ if __name__ == '__main__':
                         help='check micros for incorrect behavior under emulation')
     parser.add_argument('-e', '--execute', action='store_true',
                         help='execute micros against real hardware')
+    parser.add_argument('-j', '--json',
+                        help='accumulate constraint blocks into raw json file')
     parser.add_argument('-a', '--arff',
                         help='accumulate data into arff file')
-    parser.add_argument('-s', '--smt',
+    parser.add_argument('-s', '--smt', type=int, default=0,
                         help='run analysis round with smt solver')
+    parser.add_argument('-v', '--verbose', type=int, default=0,
+                        help='verbosity level')
+    parser.add_argument('-noabort', action='store_true',
+                        help='do not abort after first failure')
+    parser.add_argument('-ncores', type=int, default=1,
+                        help='run in parallel on this many cores')
     args = parser.parse_args()
 
     main(args)

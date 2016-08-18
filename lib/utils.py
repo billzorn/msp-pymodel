@@ -409,3 +409,35 @@ def iter_par(fn, gen, cargs, n_procs):
     return pool.map(fn, worklists)
         
     
+import subprocess
+
+class Read7z(object):
+
+    def __init__(self, fname):
+        self.cmd = ['7z', 'e', '-so', fname]
+
+    def __enter__(self):
+        self.p7z = subprocess.Popen(self.cmd,
+                                    stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE)
+        return self.p7z.stdout
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.p7z.terminate()
+
+class Write7z(object):
+
+    def __init__(self, fname):
+        self.cmd = ['7z', 'a', '-si', fname]
+        self.opts = ['-t7z', '-mx=7']
+
+    def __enter__(self):
+        self.p7z = subprocess.Popen(self.cmd + self.opts,
+                                    stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE)
+        return self.p7z.stdin
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.p7z.stdin.close()

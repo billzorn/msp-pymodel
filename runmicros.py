@@ -14,13 +14,14 @@ import utils
 def iter_states_and_write(args):
     (k, gen, (testdir, measure, verbosity)) = args
     i = 0
-    for state in micros.iter_states(gen, measure=measure, verbosity=verbosity):
+    metrics = []
+    for state in micros.iter_states(gen, measure=measure, verbosity=verbosity, metrics=metrics):
         tname = os.path.join(testdir, 'p{:d}t{:d}.elf'.format(k, i))
         elftools.save(state, tname)
         i += 1
     if verbosity >= 1:
         print('generated {:d} benchmark images'.format(i))
-    return i
+    return i, metrics[0]
 
 def main(args):
     testdir = args.testdir
@@ -40,8 +41,24 @@ def main(args):
     if ncores == 1:
         iter_states_and_write((0, generator, (testdir, measure, verbosity)))
     else:
-        utils.iter_par(iter_states_and_write, generator, (testdir, measure, verbosity), ncores)
+        metrics = utils.iter_par(iter_states_and_write, generator, (testdir, measure, verbosity), ncores)
 
+        if verbosity >= 1:
+            images = 0
+            successes_total = 0
+            conflicts_total = 0
+            condition_total = 0
+            other_total = 0
+            for i, (successes, conflict_failures, condition_failures, other_failures) in metrics:
+                images += i
+                successes_total += successes
+                conflicts_total += conflict_failures
+                condition_total += condition_failures
+                other_total += other_failures
+            print('dispatched to {:d} cores, generated {:d} total benchmark images'
+                  .format(ncores, images))
+            print('  {:d} successes, {:d} conflicts, {:d} unsupported, {:d} errors'
+                  .format(successes_total, conflicts_total, condition_total, other_total))
 
 if __name__ == '__main__':
     import argparse

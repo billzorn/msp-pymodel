@@ -237,16 +237,16 @@ def iter_reps(n):
             for dmode, rdst in iter_fmt1_dst():
                 for bw in [0, 1]:
                     for i in range(n):
-                        yield [(name, smode, dmode, rsrc, rdst, bw)] * (i+1)
+                        yield [(name, smode, dmode, rsrc, rdst, bw)] * (i+2)
     for name in iter_fmt2_ins():
         for smode, rsrc in iter_fmt1_src():
             for bw in [0, 1]:
                 for i in range(n):
-                    yield [(name, smode, 'none', rsrc, -1, bw)] * (i+1)
+                    yield [(name, smode, 'none', rsrc, -1, bw)] * (i+2)
     for name in iter_jump_ins():
         for bw in [0, 1]:
             for i in range(n):
-                yield [(name, 'none', 'none', -1, -1, bw)] * (i+1)
+                yield [(name, 'none', 'none', -1, -1, bw)] * (i+2)
 
 # Now we need to actually generate micros
 
@@ -748,7 +748,7 @@ def emit_micro(addr, codes, measure=True):
     return setup + measure_pre + bench + measure_post + teardown
 
 # pack up executables from the provided generator of instruction codes
-def iter_states(codes_iterator, measure = True, verbosity = 0):
+def iter_states(codes_iterator, measure = True, verbosity = 0, metrics = None):
     start_addr = model.fram_start
     end_addr = model.ivec_start - 256
     size = end_addr - start_addr
@@ -807,8 +807,8 @@ def iter_states(codes_iterator, measure = True, verbosity = 0):
             for i in range(8):
                 write16(start_pc + header_size + current_size + (i*2), 0x3fff)
             # ram
-            write16(0x1c00, 0x5555)
-            write16(0x1c02, 0xaaaa)
+            for i in range(256):
+                write16(model.ram_start + (i*2), 0x3fff)
             # resetvec
             write16(model.resetvec, start_pc)
             yield state
@@ -848,8 +848,8 @@ def iter_states(codes_iterator, measure = True, verbosity = 0):
         for i in range(8):
             write16(start_pc + header_size + current_size + (i*2), 0x3fff)
         # ram
-        write16(0x1c00, 0x5555)
-        write16(0x1c02, 0xaaaa)
+        for i in range(256):
+            write16(model.ram_start + (i*2), 0x3fff)
         # resetvec
         write16(model.resetvec, start_pc)
         yield state
@@ -857,6 +857,8 @@ def iter_states(codes_iterator, measure = True, verbosity = 0):
     if verbosity >= 1:
         print('{:d} successes, {:d} conflicts, {:d} unsupported, {:d} errors'
               .format(successes, conflict_failures, condition_failures, other_failures))
+    if metrics is not None:
+        metrics.append((successes, conflict_failures, condition_failures, other_failures))
 
 if __name__ == '__main__':
     import sys
