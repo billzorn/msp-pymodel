@@ -120,7 +120,7 @@ run_interval = 1
 run_passes = 3
 
 def check_elf(elfname):
-    mulator = Emulator(verbosity=1, tracing=True)
+    mulator = Emulator(verbosity=0, tracing=True)
     mulator.prog(elfname)
 
     fram_end = mulator.md(model.upper_start - 256, 256)
@@ -300,12 +300,12 @@ def main(args):
     check = args.check
     execute = args.execute
     arffname = args.arff
-    smtname = args.smt
+    smtround = args.smt
 
     if check or execute:
         walk_micros(testdir, check, execute, suffix=suffix)
 
-    if arffname or smtname:
+    if arffname or smtround:
         blocks = walk_traces(testdir)
         if arffname:
             create_arff(blocks, arffname)
@@ -338,7 +338,7 @@ if __name__ == '__main__':
     parser.add_argument('-a', '--arff',
                         help='accumulate data into arff file')
     parser.add_argument('-s', '--smt',
-                        help='accumulate data into smt file')
+                        help='run analysis round with smt solver')
     args = parser.parse_args()
 
     main(args)

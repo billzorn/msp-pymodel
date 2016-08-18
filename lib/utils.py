@@ -391,3 +391,21 @@ def print_dict(d, indent = 0):
             k_str = k
         print('{:s}{:s} : {:s}'.format(' ' * indent, k_str, subd_summary))
         print_dict(subd, indent = indent + 2)
+
+
+import multiprocessing
+
+# fn takes three arguments: first pool id number, then sub iterator, then common argument data
+def iter_par(fn, gen, cargs, n_procs):
+
+    # first run the iterator to separate out the work lists
+    worklists = [(i, [], cargs) for i in range(n_procs)]
+    i = 0
+    for x in gen:
+        worklists[i%n_procs][1].append(x)
+        i += 1
+
+    pool = multiprocessing.Pool(processes=n_procs)
+    return pool.map(fn, worklists)
+        
+    

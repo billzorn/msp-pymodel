@@ -94,7 +94,7 @@ class Emulator(object):
         if self.tracing:
             self.trace.append(fields)
             if self.verbosity >= 2:
-                print('\npc: {:05x}'.format(pc))
+                print(utils.describe_regs(self.regs()))
                 ins.describe()
                 utils.print_dict(fields)
 
@@ -119,6 +119,8 @@ class Emulator(object):
 
             # end
 
+        if self.tracing and self.verbosity >= 2:
+            print('----')
 
         if word == 0x3fff:
             # halt

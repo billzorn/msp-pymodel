@@ -378,16 +378,16 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         return prep_jump(info, name, (bw == 0))
     
     # hard coded
-    saddr = 0x1c00
-    daddr = 0x1c10
+    saddr = 0x1d00
+    daddr = 0x1d10
 
     # will be updated if we need it for part of an address
-    simm = 0x1c20
-    dimm = 0x1c30
+    simm = 0x1d20
+    dimm = 0x1d30
 
     # guaranteed to be used as data, changed to labels for call
-    sval = 0x1c40
-    dval = 0x1c50
+    sval = 0x1d40
+    dval = 0x1d50
     # We WILL end up throwing this into the reginfo, even if it is written to some address
     # somewhere.
     # Also, note that it might become something fun like ('LABEL', 'longstring'),
@@ -396,6 +396,19 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
     # flags to indicate whether exact data is needed
     require_source_data = False
     generate_post_label = False
+
+    # autoincrement mode might change the value in the source register, even when it's
+    # being used as an address
+    ai_src_offset = 0
+    if smode in {'@Rn+'}:
+        ai_src_offset = 1
+        if rsrc == 1 or bw == 0:
+            ai_src_offset = 2
+    # if the destination register is the same as the source register, it
+    # will be incremented as well.
+    ai_dst_offset = 0
+    if rsrc == rdst:
+        ai_dst_offset = ai_src_offset
 
     # First, handle some special cases for fmt2
     if name in {'PUSH', 'CALL'}:
@@ -407,7 +420,7 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         require_source_data = True
         generate_post_label = True
     if name in {'RETI'}:
-        #
+        # this seems to be the standard encoding
         if not (smode == 'Rn' and rsrc == 0):
             raise ValueError('condition: {:s} {:s} R{:d} unsupported, use {:s} Rn R0'
                              .format(name, smode, rsrc, name))
@@ -415,8 +428,12 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         # instruction that we've already decided to emit could throw everything
         # way off. Unfortunately this prevents us from testing multiple
         # in a row.
-        if info.conflict([1]) is False:
-            info.add(uses={1:None})
+        if info.conflict(1) is False:
+            # we can just use daddr-4 because we know that nothing will be put in between
+            # our setup instructions, and the net effect is to put daddr-4 in the SP.
+            # quick check to make sure the addresses are legal though.
+            assert valid_writable_address(daddr) and valid_writable_address(daddr-4)
+            info.add(uses={1:daddr-4})
             setup += [
                 ('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':1, 'bw':0}),
                 ('PUSH', '#N', 'none', {'isrc':('LABEL', testname + '_POST'), 'bw':0}),
@@ -426,8 +443,8 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         else:
             raise ValueError('conflict: already using R1, cannot reserve for RETI.')
     if name in {'SWPB', 'SXT', 'CALL', 'RETI'} and bw == 1:
-        raise ValueError('condition: {:s} bw=1 unsupported'.format(name))
         # undefined behavior
+        raise ValueError('condition: {:s} bw=1 unsupported'.format(name))
 
     # We do the destination mode for fmt1 before the source mode, as it might determine
     # what has to go in sval (for example, if our destination is PC or SR)
@@ -443,11 +460,15 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                     sval = 0
                 require_source_data = True
                 generate_post_label = True
-            # otherwise pick a source value that will
+            # otherwise pick a source value that will preserve the value in the register
+            # after the operation
             elif assem.modifies_destination(name):
                 sval = get_fmt1_identity(name)
                 assert sval is not None
                 require_source_data = True
+        elif rdst in {3}:
+            # don't bother trying to set r3; do we need any kind of check here?
+            pass
         elif info.check_or_set_use(rdst, validator_if_needed(False, dval), dval) is False:
             setup.append(('MOV', '#N', 'Rn', {'isrc':dval, 'rdst':rdst, 'bw':0}))
     elif dmode in {'X(Rn)'}:
@@ -459,13 +480,16 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         if known_daddr is False:
             setup.append(('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':rdst, 'bw':0}))
         elif known_daddr == saddr:
+            # try to use offset to separate locations
             dimm = 0x2
             daddr = saddr + 0x2
         else:
             # remember new address
             daddr = known_daddr
-        if info.check_or_set_use(daddr, validator_if_needed(False, dval), dval) is False:
-            setup.append(('MOV', '#N', '&ADDR', {'isrc':dval, 'idst':daddr, 'bw':0}))
+        # if we will change rdst due to rsrc==rdst ai, then use the modified address
+        daddr_post_ai = (daddr + ai_dst_offset) & -2
+        if info.check_or_set_use(daddr_post_ai, validator_if_needed(False, dval), dval) is False:
+            setup.append(('MOV', '#N', '&ADDR', {'isrc':dval, 'idst':daddr_post_ai, 'bw':0}))
     elif dmode in {'ADDR'}:
         dimm = ('PC_ABS', daddr)
         if info.check_or_set_use(daddr, validator_if_needed(False, dval), dval) is False:
@@ -488,7 +512,7 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                                  .format(name, smode, rsrc))
         # we might be able to control the SR value, currently not well supported though
         elif rsrc in {2}:
-            v = info.conflict([2])
+            v = info.conflict(2)
             if v is False or v is True:
                 v = None
             if not validator_if_needed(require_source_data, sval)(v):
@@ -500,15 +524,14 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                 raise ValueError('condition: CG provides wrong value for {:s} {:s} R{:d}'
                                  .format(name, smode, rsrc))
         else:
-
-            
-
             if info.check_or_set_use(rsrc, 
                                      validator_if_needed(require_source_data, sval), 
                                      sval) is False:
                 # We look at the current value, and if it needs to be something specific and already
                 # isn't, we fail. Otherwise if it wasn't set, we set it.
                 setup.append(('MOV', '#N', 'Rn', {'isrc':sval, 'rdst':rsrc, 'bw':0}))
+                # should never try to set r3 due to the constant generator check
+                assert rsrc != 3, 'really?'
     elif smode in {'X(Rn)'}:
         assert rsrc not in {0, 2, 3}, 'invalid source mode: {:s} {:d}'.format(smode, rsrc)
         # for now, move into the register, and use 0 offset...
@@ -555,11 +578,10 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                                      sval) is False:
                 setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
             # we need to do something here if we're autoincrementing
-            if smode in {'@Rn+'}:
-                increment_size = 1
-                if rsrc == 1 or bw == 0:
-                    increment_size = 2
-                info.overwrite_or_set_use(rsrc, saddr + increment_size)
+            if   ai_src_offset == 1:
+                info.overwrite_or_set_use(rsrc, None)
+            elif ai_src_offset == 2:
+                info.overwrite_or_set_use(rsrc, saddr + ai_src_offset)
     elif smode in {'#@N', '#N'}:
         simm = sval
     elif smode in {'#1'}:
@@ -574,12 +596,16 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
     
     actual_dmode = dmode
     actual_rdst = rdst
+    # if we're getting the address out of a register, need to check for ai shenanigans
     actual_daddr = daddr
+    if actual_dmode in {'X(Rn)'}:
+        actual_daddr = (actual_daddr + ai_dst_offset) & -2
+
     # whitelist some fmt2 instructions that behave like they have a destination
     if name in {'RRC', 'SWPB', 'RRA', 'SXT'}:
         actual_dmode = smode
         actual_rdst = rsrc
-        actual_daddr = daddr
+        actual_daddr = saddr
         # some fmt2 instructions have modes that are not well defined by the manual
         if actual_dmode in {'#1', '#N', '#@N'} or assem.has_cg(actual_dmode, actual_rdst):
             raise ValueError('condition: unsupported mode {:s} R{:d} for {:s}'
@@ -604,6 +630,13 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                 if not is_fmt1_identity(name, sval):
                     raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
                                      .format(repr(sval), name, actual_dmode, actual_rdst))
+                # If we're carry dependent, also need to look at the value in the SR.
+                if name in {'ADDC', 'SUBC'}:
+                    if info.check_or_set_use(2, 
+                                             validator_if_needed(True, 0),
+                                             0) is False:
+                        setup.append(('MOV', 'Rn', 'Rn', {'rsrc':3, 'rdst':2, 'bw':0}))
+                
         # Otherwise add destination register to clobbers since we're writing to it.
         # I think this is all we need to do.
         else:
@@ -623,11 +656,26 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         assert False, 'unexpected apparent dmode? {:s} R{:d}'.format(actual_dmode, actual_rdst)
 
     if assem.modifies_sr(name):
+        info.overwrite_or_set_use(2, None)
         info.add(clobbers=[2])
 
     # hack, instructions that modify the SP force the value to unknown afterwards
     if name in {'PUSH', 'CALL', 'RETI'}:
+        offset = -2
+        if name in {'RETI'}:
+            offset = 4
+        
+        # check if the offest we picked looks writable
+        spval = info.conflict(1)
+        if not (isinstance(spval, int) and valid_writable_address(spval + offset)):
+            raise ValueError('conflict: SP appears to hold invalid stack address: {:s} + {:s}'
+                             .format(repr(spval), repr(offset)))
+        
+        # then destroy the value in the register, so we don't try to use it again
         info.overwrite_or_set_use(1, None)
+        if name in {'PUSH', 'CALL'}:
+            # and the data there that's being written by the push
+            info.overwrite_or_set_use(spval + offset, None)
 
     # prepare fields
     fields = {'bw':bw}
@@ -711,7 +759,6 @@ def iter_states(codes_iterator, measure = True, verbosity = 0):
     current_addr = start_addr
     current_region = []
     current_size = 0
-    states = []
 
     condition_failures = 0
     conflict_failures = 0
@@ -764,7 +811,7 @@ def iter_states(codes_iterator, measure = True, verbosity = 0):
             write16(0x1c02, 0xaaaa)
             # resetvec
             write16(model.resetvec, start_pc)
-            states.append(state)
+            yield state
 
             current_addr = start_addr
 
@@ -805,14 +852,11 @@ def iter_states(codes_iterator, measure = True, verbosity = 0):
         write16(0x1c02, 0xaaaa)
         # resetvec
         write16(model.resetvec, start_pc)
-        states.append(state)
+        yield state
 
     if verbosity >= 1:
         print('{:d} successes, {:d} conflicts, {:d} unsupported, {:d} errors'
               .format(successes, conflict_failures, condition_failures, other_failures))
-
-    return states
-
 
 if __name__ == '__main__':
     import sys

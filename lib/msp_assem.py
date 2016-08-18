@@ -26,12 +26,11 @@ class Reginfo(object):
         self.uses = uses
         self.clobbers = set(clobbers)
 
-    def conflict(self, regs):
-        for reg in regs:
-            if reg in self.uses:
-                return self.uses[reg]
-            elif reg in self.clobbers:
-                return True
+    def conflict(self, reg):
+        if reg in self.uses:
+            return self.uses[reg]
+        elif reg in self.clobbers:
+            return True
         return False
 
     def add(self, uses = {}, clobbers = []):
