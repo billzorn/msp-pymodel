@@ -1,16 +1,10 @@
 # smt bindings through z3
 
 import z3
+z3.set_option(max_args=10000000, max_lines=1000000, max_depth=10000000, max_visited=1000000)
 
 import utils
 from msp_isa import isa
-
-def solve(f):
-    formula = z3.parse_smt2_string(f)
-    s = z3.Solver()
-    s.add(formula)
-    print(s.check())
-    print(s.unsat_core())
 
 def smt_iname(ins):
     smode_ident = utils.mode_ident[ins.smode]
@@ -62,7 +56,9 @@ def solve_0(blocks):
     core_smodes = set()
     core_dmodes = set()
     core_names = set()
+    cx_count = 0
     while s.check(*predicates) == z3.unsat:
+        cx_count += 1
         core = s.unsat_core()
         print('-----------------------------')
         print(core)
@@ -98,6 +94,8 @@ def solve_0(blocks):
             print('{:d} total cycles'.format(cycles))
             print('')
             predicates.remove(pred)
+        if cx_count >= 10:
+            break
 
     print('=============')
     print('{:d} instructions found in unsat cores'.format(len(core_insns)))
@@ -117,13 +115,11 @@ def solve_0(blocks):
 def create_ipreds():
     ipreds = {}
     for ins in isa.ids_ins:
-        # if ins.fmt != 'fmt1':
-        #     continue
         ipreds[ins] = z3.Bool('p_' + smt_iname(ins))
     return ipreds
 
 # filter out some instructions with known behaviors
-def blacklist(ins, fields):
+def blacklist_std(ins, fields):
     return any([
         # read timer
         (ins.name == 'MOV' and
@@ -145,7 +141,7 @@ def add_instr_constraint_0(ipreds, solver, time_fn, inst_dt, block, cycles):
         ins = isa.decode(fields['words'][0])
         iname = smt_iname(ins)
         times.append(time_fn(inst_dt.__dict__[iname]))
-        if not blacklist(ins, fields):
+        if not blacklist_std(ins, fields):
             preds.add(ipreds[ins])
 
     solver.add(z3.Implies(z3.And(*preds), z3.Sum(times) == cycles))
@@ -294,6 +290,199 @@ def solve_1_0(blocks):
     generated_fn = s.model()[time_fn_1]
     print(generated_fn)
 
+
+
+
+# general framework for building these "solve(blocks)" type passes
+
+def create_block_ident(i, addr, block, difference):
+    return 't_{:d}_{:05x}'.format(i, addr)
+
+# General purpose solver loop. Define the desired behavior as functions and then pass
+# them in.
+#
+# fn_add_constraint(s, ident, block, cycles): returns None
+#   s:      the current solver
+#   ident:  a unique id string for the block
+#   block:  the content of the block (instructions)
+#   cycles: the cycle count to execute the block
+# Data is cleaned (i.e. if the diff didn't make sense, we would have already asserted)
+# so the logic can go ahead and add to the solver's formula without any further checks.
+# Note that if predicates are generated on the fly, the function should use some
+# external data structure to keep track of them.
+#
+# fn_get_preds(): returns a list of z3.Bool
+# This is called after all invocations of fn_add_constraint(), the idea being that
+# as constraints are added, the predicates might change, so solve_x() waits until the
+# last moment to ask for them.
+#
+# fn_process_core(core): returns True of False
+#   core: an unsat core, which is a list of z3.Bool
+# Maybe display information about the core, or store it somewhere. Return True to break
+# out of the checker loop, or False to remove this core and continue searching for a model.
+#
+# returns True/False (SAT/broke out of checker loop), the final solver, remaining predicates
+def solve_x(blocks, fn_add_constraint, fn_get_preds, fn_process_core, verbosity=1):
+    s = z3.Solver()
+    
+    i = 0
+    for addr, block, difference in blocks:
+        ident = create_block_ident(i, addr, block, difference)
+        assert len(difference) == 2 and difference[1] == 0
+        cycles = difference[0]
+        fn_add_constraint(s, ident, block, cycles)
+        i += 1
+
+    if verbosity >= 1:
+        print('    added constraints for {:d} blocks'.format(i))
+
+    predicates = fn_get_preds()
+
+    if verbosity >= 1:
+        print('    got {:d} control predicates, solving...'.format(len(predicates)))
+
+    found_sat = True
+    rounds = 0
+    while s.check(*predicates) == z3.unsat:
+        rounds += 1
+        core = s.unsat_core()
+        for pred in core:
+            predicates.remove(pred)
+        if fn_process_core(core):
+            found_sat = False
+            break
+
+    if verbosity >= 1:
+        print(('    found satisfying assignment' if found_sat else '    failed to find assignment')
+              + ' after {:d} rounds, {:d} remaining predicates'.format(rounds, len(predicates)))
+
+    return found_sat, s, predicates
+
+def mk_add_constraint_individual(predicates, time_fn, inst_dt, pred_blocks = None):
+    def add_constraint(s, ident, block, cycles):
+        p = z3.Bool(ident)
+        times = []
+        for fields in block:
+            ins = isa.decode(fields['words'][0])
+            iname = smt_iname(ins)
+            times.append(time_fn(inst_dt.__dict__[iname]))
+        s.add(z3.Implies(p, z3.Sum(times) == cycles))
+        predicates.append(p)
+        if pred_blocks is not None:
+            pred_blocks[p] = ident, block, cycles
+    return add_constraint
+
+def mk_add_constraint_instr(ipreds, time_fn, inst_dt, blacklist = None):
+    def add_constraint(s, ident, block, cycles):
+        preds = set()
+        times = []
+        for fields in block:
+            ins = isa.decode(fields['words'][0])
+            iname = smt_iname(ins)
+            times.append(time_fn(inst_dt.__dict__[iname]))
+            if blacklist is None or not blacklist(ins, fields):
+                preds.add(ipreds[ins])
+        s.add(z3.Implies(z3.And(*preds), z3.Sum(times) == cycles))
+    return add_constraint
+
+def describe_core_cx(core, pred_blocks):
+    print('-----------------------------')
+    print(core)
+    print('')
+    for pred in core:
+        ident, block, cycles = pred_blocks[pred]
+        for fields in block:
+            ins = isa.decode(fields['words'][0])
+            fmt, name, smode, dmode = isa.instr_to_modes(ins)
+            if fmt == 'fmt1':
+                rsrc = fields['rsrc']
+                rdst = fields['rdst']
+                if 'isrc' in fields:
+                    sval = ', {:#x}'.format(fields['isrc'])
+                else:
+                    sval = ''
+                print('{:s}\t{:s} (R{:d}{:s}), {:s} (R{:d})'
+                      .format(name, smode, rsrc, sval, dmode, rdst))
+            else:
+                print('fmt, name, smode, dmode')
+                utils.print_dict(fields)
+        print('{:d} total cycles'.format(cycles))
+        print('')
+
+def round_1(blocks):
+    cx_max = 5
+
+    print('SMT timing analysis round 1.')
+
+    ipreds = {ins : z3.Bool('p_' + smt_iname(ins)) for ins in isa.ids_ins}
+    inst_dt = create_instr_datatype()
+    time_fn = z3.Function('time_r1', inst_dt, z3.IntSort())
+
+    predicates_individual = []
+    pred_blocks = {}
+    add_constraint_individual = mk_add_constraint_individual(
+        predicates_individual, time_fn, inst_dt, pred_blocks=pred_blocks
+    )
+    def get_preds_individual():
+        return [x for x in predicates_individual]
+    cx_count = [0]
+    def process_core_individual(core):
+        describe_core_cx(core, pred_blocks)
+        cx_count[0] += 1
+        if cx_count[0] >= cx_max:
+            return True
+        else:
+            return False
+
+    print('Solving for first {:d} counterexamples...'.format(cx_max))
+    success, s, s_preds = solve_x(blocks,
+                                  add_constraint_individual,
+                                  get_preds_individual,
+                                  process_core_individual)
+
+    if success:
+        print('Done. Found a satisfying assignment after discarding {:d} counterexamples.'
+              .format(cx_count[0]))
+        print(s.model()[time_fn])
+    else:
+        print('Done. Did not find a satisfying assignment after discarding {:d} counterexamples.'
+              .format(cx_count[0]))
+
+    add_constraint_instr = mk_add_constraint_instr(
+        ipreds, time_fn, inst_dt, blacklist=blacklist_std
+    )
+    def get_preds_instr():
+        return [x for x in ipreds.values()]
+    removed_pred_names = []
+    cx_instrs = [0]
+    def process_core_instr(core):
+        for pred in core:
+            removed_pred_names.append(str(pred))
+        cx_instrs[0] = cx_instrs[0] + 1
+        return False
+
+    print('Solving for largest satisfiable subset of instructions...')
+    success, s, s_preds = solve_x(blocks,
+                                  add_constraint_instr,
+                                  get_preds_instr,
+                                  process_core_instr)
+
+    print('Done. Excluded {:d} instructions across {:d} unsat cores.'
+          .format(len(removed_pred_names), cx_instrs[0]))
+    for pname in sorted(removed_pred_names):
+        print('  ' + pname)
+
+    if success:
+        print('Found a satisfying assignment:'
+              .format(cx_count[0]))
+        print(s.model()[time_fn])
+        print('Remaining control predicates:')
+        for pname in sorted(map(str, s_preds)):
+            print('  ' + pname)
+    else:
+        print('Did not find a satisfying assignment. {:d} control predicates remain.'
+              .format(len(s_preds)))
+        
 
 if __name__ == '__main__':
     Instruction = z3.Datatype('Instruction')

@@ -47,61 +47,7 @@ def arff_entry(indices, cycles):
     return ', '.join([str(bins[i]) if i in bins else '0' for i in range(len(isa.ids_ins))] + [str(cycles)])
 
 
-def smt_iname(ins):
-    smode_ident = utils.mode_ident[ins.smode]
-    dmode_ident = utils.mode_ident[ins.dmode]
-    return '_'.join((ins.fmt, ins.name, smode_ident, dmode_ident))
-
-def smt_rname(reg):
-    if reg <= 4:
-        return 'R{:d}'.format(reg)
-    else:
-        return 'R4'
-
-# for smt files only
-#(set-option :produce-unsat-cores true)\n(set-option :produce-models true)\n\n
-
-def smt_instr_header():
-    s = '(declare-datatypes () ((Instr'
-    for ins in isa.ids_ins:
-
-        # temporarily limit to fmt1
-        if ins.fmt != 'fmt1':
-            continue
-
-        s += ' ' + smt_iname(ins)
-    return s + ')))'
-
-def smt_reg_header():
-    return '(declare-datatypes () ((Register R0 R1 R2 R3 R4)))'
-
-def smt_header_1():
-    return smt_instr_header() + '\n(declare-fun time (Instr) Int)'
-
-def smt_footer():
-    return '(check-sat)\n(get-unsat-core)\n(get-model)'
-
-fid = 0
-def smt_entry_1(block, cycles):
-    global fid
-    constraint = '(assert (! (= {:d} (+'.format(cycles)
-    fid += 1
-    for fields in block:
-        ins = isa.decode(fields['words'][0])
-        constraint += ' (time {:s})'.format(smt_iname(ins))
-    return constraint + ')) :named f{:d}))'.format(fid)
-
-def smt_entry_2(block, cycles):
-    constraint = '(assert (= {:d} (+'.format(cycles)
-    for fields in block:
-        ins = isa.decode(fields['words'][0])
-        rsrc = fields['rsrc']
-        rdst = fields['rdst']
-        constraint += ' (time {:s} {:s} {:s})'.format(smt_iname(ins), smt_rname(rsrc), smt_rname(rdst))
-    return constraint + ')))'
-
-
-# some ideas:
+# some SMT ideas:
 # simplify: for each instruction, ask if we can merge a formula that gives a register-independent
 # timing for that instruction with the rest of the formula
 #
@@ -247,29 +193,6 @@ def extract_json(jname):
         jobj = json.load(f)
     return jobj['blocks']
 
-def create_smt(blocks, smtname):
-    with open(smtname, 'wt') as f:
-
-        f.write(smt_header_1() + '\n\n')
-
-        for addr, block, difference in blocks:
-            assert(len(difference) == 2 and difference[1] == 0)
-            cycles = difference[0]
-            f.write(smt_entry_1(block, cycles) + '\n')
-
-        f.write('\n' + smt_footer())
-
-def create_smt_string(blocks):
-    s = smt_header_1() + '\n\n'
-
-    for addr, block, difference in blocks:
-        assert(len(difference) == 2 and difference[1] == 0)
-        cycles = difference[0]
-        s += smt_entry_1(block, cycles) + '\n'
-
-    #s += '\n' + smt_footer()
-    return s
-
 def walk_par(fn, targetdir, cargs, n_procs = 1, verbosity = 0):
     roots = set()
     worklists = [(i, [], cargs) for i in range(n_procs)]
@@ -297,8 +220,6 @@ def walk_par(fn, targetdir, cargs, n_procs = 1, verbosity = 0):
     else:
         pool = multiprocessing.Pool(processes=n_procs)
         return pool.map(fn, worklists)
-        # results = pool.map(fn, worklists)
-        # return [result for sublist in results for result in sublist]
 
 def process_micros(args):
     (k, files, (check, execute, suffix, abort_on_error, verbosity)) = args
@@ -405,14 +326,9 @@ def main(args):
             create_arff(blocks, arffname)
 
         if smtround > 0:
-            # create_smt(blocks, smtname)
 
-            #formula = create_smt_string(blocks)
-            #smt.solve(formula)
-
-            #smt.solve_0(blocks)
-
-            smt.solve_instr_0(blocks)
+            if smtround == 1:
+                smt.round_1(blocks)
 
             #smt.solve_1(blocks)
 
