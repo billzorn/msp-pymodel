@@ -33,36 +33,6 @@ def is_reg_store(fields, rsrc):
 def is_reg_sub(fields, rsrc, rdst):
     return fields['words'] == [0x8000 | rsrc << 8 | rdst]
 
-
-def arff_header():
-    s = "@relation 'cycle_count'\n"
-    for i, ins in enumerate(isa.ids_ins):
-        s += '@attribute {:s} numeric\n'.format('_'.join(isa.idx_to_modes(i)))
-    return s + '@attribute cycles numeric\n@data'
-
-def arff_entry(indices, cycles):
-    bins = {}
-    for k in indices:
-        bins[k] = bins.setdefault(k, 0) + 1
-    return ', '.join([str(bins[i]) if i in bins else '0' for i in range(len(isa.ids_ins))] + [str(cycles)])
-
-
-# some SMT ideas:
-# simplify: for each instruction, ask if we can merge a formula that gives a register-independent
-# timing for that instruction with the rest of the formula
-#
-# various ways to get counterexamples
-#
-# use z3 to get counterexample, examine manually, then propose minimal change to information
-# that z3 is given to try and fix it
-# (first, try prefix of instructions, if this doesn't work, introduce state)
-
-# counterexamples explain why it needs to be why more complicated, and where
-# idea is that the human introduces the simplest change
-# "the log of the counterexamples is interesting"
-# maximal subset that passes? how to do this with a tool
-
-
 run_max_steps = 10000
 run_interval = 1
 run_passes = 3
@@ -165,6 +135,18 @@ def mismatches_to_blocks(trace, mismatches, blocks):
 
         elif in_region:
             current.append(fields)
+
+def arff_header():
+    s = "@relation 'cycle_count'\n"
+    for i, ins in enumerate(isa.ids_ins):
+        s += '@attribute {:s} numeric\n'.format('_'.join(isa.idx_to_modes(i)))
+    return s + '@attribute cycles numeric\n@data'
+
+def arff_entry(indices, cycles):
+    bins = {}
+    for k in indices:
+        bins[k] = bins.setdefault(k, 0) + 1
+    return ', '.join([str(bins[i]) if i in bins else '0' for i in range(len(isa.ids_ins))] + [str(cycles)])
 
 def create_arff(blocks, arffname):
     with open(arffname, 'wt') as f:
@@ -327,12 +309,15 @@ def main(args):
 
         if smtround > 0:
 
-            if smtround == 1:
+            if   smtround == 1:
                 smt.round_1(blocks)
+            elif smtround == 2:
+                smt.round_2(blocks)
+            elif smtround == 3:
+                smt.round_3(blocks)
+            elif smtround == 4:
+                smt.round_4(blocks)
 
-            #smt.solve_1(blocks)
-
-            #smt.solve_1_0(blocks)
 
 if __name__ == '__main__':
     import argparse
