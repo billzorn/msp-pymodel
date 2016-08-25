@@ -135,6 +135,7 @@ def do_round_cx(blocks, mk_add_constraint, z3_data, cx_max):
     else:
         print('Done. Did not find a satisfying assignment after discarding {:d} counterexamples.'
               .format(cx_count[0]))
+    return success
 
 def do_round_instr_subset(blocks, mk_add_constraint, z3_data, ipreds):
     add_constraint = mk_add_constraint(ipreds, blacklist_std, z3_data)
@@ -169,18 +170,24 @@ def do_round_instr_subset(blocks, mk_add_constraint, z3_data, ipreds):
     else:
         print('Did not find a satisfying assignment. {:d} control predicates remain.'
               .format(len(s_preds)))
+    return success
 
 # datatype definitions
 
 def smt_iname(ins):
-    smode_ident = utils.mode_ident[ins.smode]
-    dmode_ident = utils.mode_ident[ins.dmode]
-    return '_'.join((ins.fmt, ins.name, smode_ident, dmode_ident))
+    if ins is None:
+        return smt_iname(prev_ins)
+    else:
+        smode_ident = utils.mode_ident[ins.smode]
+        dmode_ident = utils.mode_ident[ins.dmode]
+        return '_'.join((ins.fmt, ins.name, smode_ident, dmode_ident))
 
 def create_instr_datatype():
     Instruction = z3.Datatype('msp430_Instruction')
     for ins in isa.ids_ins:
         Instruction.declare(smt_iname(ins))
+    # null instruction, for cases where an instruction is not provided or unknown
+    Instruction.declare('null_instruction')
     return Instruction.create()
 
 # filter out some instructions with known behaviors
@@ -234,6 +241,13 @@ def create_reg_datatype():
         Register.declare(rname)
     return Register.create()
 
+def create_state_datatype(name, n):
+    State = z3.Datatype('msp430_State_' + name)
+    for i in range(n):
+        State.declare('state_{:d}'.format(i))
+    return State.create()
+
+
 # smt rounds
 
 def mk_add_constraint_individual(predicates, pred_blocks, z3_data):
@@ -275,8 +289,8 @@ def round_1(blocks):
     time_fn = z3.Function('time_r1', inst_dt, z3.IntSort())
 
     z3_data = (inst_dt, time_fn, [time_fn])
-    do_round_cx(blocks, mk_add_constraint_individual, z3_data, cx_max)
-    do_round_instr_subset(blocks, mk_add_constraint_instr, z3_data, ipreds)
+    if not do_round_cx(blocks, mk_add_constraint_individual, z3_data, cx_max):
+        do_round_instr_subset(blocks, mk_add_constraint_instr, z3_data, ipreds)
 
 def mk_add_constraint_individual_r(predicates, pred_blocks, z3_data):
     (time_fn, _) = z3_data
@@ -325,8 +339,8 @@ def round_2(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rdst])
-    do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
-    do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
+    if not do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max):
+        do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
 
 def round_3(blocks):
     cx_max = 5
@@ -352,8 +366,8 @@ def round_3(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rdst, time_fn_rsrc])
-    do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
-    do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
+    if not do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max):
+        do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
 
 def round_4(blocks):
     cx_max = 5
@@ -364,10 +378,10 @@ def round_4(blocks):
     inst_dt = create_instr_datatype()
     reg_dt = create_reg_datatype()
 
-    time_fn_noreg = z3.Function('time_r3_noreg', inst_dt, z3.IntSort())
-    time_fn_rsrc = z3.Function('time_r3_rsrc', inst_dt, reg_dt, z3.IntSort())
-    time_fn_rdst = z3.Function('time_r3_rdst', inst_dt, reg_dt, z3.IntSort())
-    time_fn_rsrc_rdst = z3.Function('time_r3_rsrc', inst_dt, reg_dt, reg_dt, z3.IntSort())
+    time_fn_noreg = z3.Function('time_r4_noreg', inst_dt, z3.IntSort())
+    time_fn_rsrc = z3.Function('time_r4_rsrc', inst_dt, reg_dt, z3.IntSort())
+    time_fn_rdst = z3.Function('time_r4_rdst', inst_dt, reg_dt, z3.IntSort())
+    time_fn_rsrc_rdst = z3.Function('time_r3_rsrc_rdst', inst_dt, reg_dt, reg_dt, z3.IntSort())
     def time_fn(ins, fields):
         iname = smt_iname(ins)
         if ins.fmt in {'fmt1'} and (ins.smode in {'@Rn', '@Rn+'} or ins.dmode in {'Rn'}):
@@ -387,9 +401,202 @@ def round_4(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst])
-    do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
-    do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
+    if not do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max):
+        do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
 
+def round_5(blocks):
+    cx_max = 5
+
+    print('SMT timing analysis round 5.')
+
+    ipreds = {ins : z3.Bool('p_' + smt_iname(ins)) for ins in isa.ids_ins}
+    inst_dt = create_instr_datatype()
+    reg_dt = create_reg_datatype()
+
+    time_fn_noreg = z3.Function('time_r5_noreg', inst_dt, z3.IntSort())
+    time_fn_rsrc = z3.Function('time_r5_rsrc', inst_dt, reg_dt, z3.IntSort())
+    time_fn_rdst = z3.Function('time_r5_rdst', inst_dt, reg_dt, z3.IntSort())
+    time_fn_rsrc_rdst = z3.Function('time_r5_rsrc_rdst', inst_dt, reg_dt, reg_dt, z3.IntSort())
+    def time_fn(ins, fields):
+        iname = smt_iname(ins)
+        if ins.fmt in {'fmt1'} and (ins.smode in {'@Rn', '@Rn+'} or ins.dmode in {'Rn'}):
+            if   ins.smode in {'@Rn', '@Rn+'} and ins.dmode in {'Rn'}:
+                rsname = smt_rsrc(fields)
+                rdname = smt_rdst(fields)
+                return time_fn_rsrc_rdst(inst_dt.__dict__[iname], 
+                                         reg_dt.__dict__[rsname], 
+                                         reg_dt.__dict__[rdname])
+            elif ins.smode in {'@Rn', '@Rn+'}:
+                rname = smt_rsrc(fields)
+                return time_fn_rsrc(inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+            else:
+                rname = smt_rdst(fields)
+                return time_fn_rdst(inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        elif ins.name in {'PUSH', 'CALL'} and ins.smode in {'X(Rn)'}:
+            rname = smt_rsrc(fields)
+            return time_fn_rsrc(inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        else:
+            return time_fn_noreg(inst_dt.__dict__[iname])
+
+    z3_data = (time_fn, [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst])
+    if not do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max):
+        do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
+
+# more complex rounds that pass state of previous instructions too
+
+def mk_add_constraint_individual_prev(predicates, pred_blocks, z3_data):
+    (time_fn, _) = z3_data
+    def add_constraint(s, ident, block, cycles):
+        p = z3.Bool(ident)
+        times = []
+        prev_ins = None
+        for fields in block:
+            ins = isa.decode(fields['words'][0])
+            times.append(time_fn(ins, fields, prev_ins))
+            prev_ins = ins
+        s.add(z3.Implies(p, z3.Sum(times) == cycles))
+        predicates.append(p)
+        if pred_blocks is not None:
+            pred_blocks[p] = ident, block, cycles
+    return add_constraint
+
+def mk_add_constraint_instr_prev(ipreds, blacklist, z3_data):
+    (time_fn, _) = z3_data
+    def add_constraint(s, ident, block, cycles):
+        preds = set()
+        times = []
+        prev_ins = None
+        for fields in block:
+            ins = isa.decode(fields['words'][0])
+            times.append(time_fn(ins, fields, prev_ins))
+            prev_ins = ins
+            if blacklist is None or not blacklist(ins, fields):
+                preds.add(ipreds[ins])
+        s.add(z3.Implies(z3.And(*preds), z3.Sum(times) == cycles))
+    return add_constraint
+
+def round_6(blocks):
+    cx_max = 5
+
+    print('SMT timing analysis round 6.')
+
+    ipreds = {ins : z3.Bool('p_' + smt_iname(ins)) for ins in isa.ids_ins}
+    inst_dt = create_instr_datatype()
+    reg_dt = create_reg_datatype()
+
+    time_fn_noreg = z3.Function('time_r6_noreg', inst_dt, z3.IntSort())
+    time_fn_rsrc = z3.Function('time_r6_rsrc', inst_dt, reg_dt, z3.IntSort())
+    time_fn_rdst = z3.Function('time_r6_rdst', inst_dt, reg_dt, z3.IntSort())
+    time_fn_rsrc_rdst = z3.Function('time_r6_rsrc_rdst', inst_dt, reg_dt, reg_dt, z3.IntSort())
+    time_fn_prev = z3.Function('time_r6_prev', inst_dt, inst_dt, z3.IntSort())
+    def time_fn(ins, fields, prev_ins):
+        iname = smt_iname(ins)
+        if ins.fmt in {'fmt1'} and (ins.smode in {'@Rn', '@Rn+'} or ins.dmode in {'Rn'}):
+            if   ins.smode in {'@Rn', '@Rn+'} and ins.dmode in {'Rn'}:
+                rsname = smt_rsrc(fields)
+                rdname = smt_rdst(fields)
+                return time_fn_rsrc_rdst(inst_dt.__dict__[iname], 
+                                         reg_dt.__dict__[rsname], 
+                                         reg_dt.__dict__[rdname])
+            elif ins.smode in {'@Rn', '@Rn+'}:
+                rname = smt_rsrc(fields)
+                return time_fn_rsrc(inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+            else:
+                rname = smt_rdst(fields)
+                return time_fn_rdst(inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        elif ins.name in {'PUSH', 'CALL'} and ins.smode in {'X(Rn)'}:
+            rname = smt_rsrc(fields)
+            return time_fn_rsrc(inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        elif ins.name in {'RRA', 'RRC', 'SWPB', 'SXT'} and ins.smode in {'@Rn', '@Rn+'}:
+            pname = smt_iname(prev_ins)
+            return time_fn_prev(inst_dt.__dict__[iname], inst_dt.__dict__[pname])
+        else:
+            return time_fn_noreg(inst_dt.__dict__[iname])
+
+    z3_data = (time_fn, [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst, time_fn_prev])
+    if not do_round_cx(blocks, mk_add_constraint_individual_prev, z3_data, cx_max):
+        do_round_instr_subset(blocks, mk_add_constraint_instr_prev, z3_data, ipreds)
+
+# Just reporting the previous instruction doesn't work. Let's try carrying some state along.
+
+def mk_add_constraint_individual_state(predicates, pred_blocks, z3_data):
+    (time_fn, state_fn, state_init, _) = z3_data
+    def add_constraint(s, ident, block, cycles):
+        p = z3.Bool(ident)
+        times = []
+        z3_state = state_init()
+        for fields in block:
+            ins = isa.decode(fields['words'][0])
+            times.append(time_fn(ins, fields, z3_state))
+            z3_state = state_fn(ins, fields, z3_state)
+        s.add(z3.Implies(p, z3.Sum(times) == cycles))
+        predicates.append(p)
+        if pred_blocks is not None:
+            pred_blocks[p] = ident, block, cycles
+    return add_constraint
+
+def mk_add_constraint_instr_state(ipreds, blacklist, z3_data):
+    (time_fn, state_fn, state_init, _) = z3_data
+    def add_constraint(s, ident, block, cycles):
+        preds = set()
+        times = []
+        z3_state = state_init()
+        for fields in block:
+            ins = isa.decode(fields['words'][0])
+            times.append(time_fn(ins, fields, z3_state))
+            z3_state = state_fn(ins, fields, z3_state)
+            if blacklist is None or not blacklist(ins, fields):
+                preds.add(ipreds[ins])
+        s.add(z3.Implies(z3.And(*preds), z3.Sum(times) == cycles))
+    return add_constraint
+
+def round_7(blocks):
+    cx_max = 5
+
+    print('SMT timing analysis round 7.')
+
+    ipreds = {ins : z3.Bool('p_' + smt_iname(ins)) for ins in isa.ids_ins}
+    inst_dt = create_instr_datatype()
+    reg_dt = create_reg_datatype()
+    state_dt = create_state_datatype('r7', 2)
+
+    time_fn_noreg = z3.Function('time_r7_noreg', state_dt, inst_dt, z3.IntSort())
+    time_fn_rsrc = z3.Function('time_r7_rsrc', state_dt, inst_dt, reg_dt, z3.IntSort())
+    time_fn_rdst = z3.Function('time_r7_rdst', state_dt, inst_dt, reg_dt, z3.IntSort())
+    time_fn_rsrc_rdst = z3.Function('time_r7_rsrc_rdst', state_dt, inst_dt, reg_dt, reg_dt, z3.IntSort())
+    state_fn_default = z3.Function('state_r7_default', state_dt, inst_dt, state_dt)
+    state_fn_init = z3.Function('state_r7_init', state_dt)
+
+    def time_fn(ins, fields, state):
+        iname = smt_iname(ins)
+        if ins.fmt in {'fmt1'} and (ins.smode in {'@Rn', '@Rn+'} or ins.dmode in {'Rn'}):
+            if   ins.smode in {'@Rn', '@Rn+'} and ins.dmode in {'Rn'}:
+                rsname = smt_rsrc(fields)
+                rdname = smt_rdst(fields)
+                return time_fn_rsrc_rdst(state, 
+                                         inst_dt.__dict__[iname], 
+                                         reg_dt.__dict__[rsname], 
+                                         reg_dt.__dict__[rdname])
+            elif ins.smode in {'@Rn', '@Rn+'}:
+                rname = smt_rsrc(fields)
+                return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+            else:
+                rname = smt_rdst(fields)
+                return time_fn_rdst(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        elif ins.name in {'PUSH', 'CALL'} and ins.smode in {'X(Rn)'}:
+            rname = smt_rsrc(fields)
+            return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        else:
+            return time_fn_noreg(state, inst_dt.__dict__[iname])
+
+    def state_fn(ins, fields, state):
+        iname = smt_iname(ins)
+        return state_fn_default(state, inst_dt.__dict__[iname])
+
+    z3_data = (time_fn, state_fn, state_fn_init, 
+               [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst, state_fn_default, state_fn_init])
+    if not do_round_cx(blocks, mk_add_constraint_individual_state, z3_data, cx_max):
+        do_round_instr_subset(blocks, mk_add_constraint_instr_state, z3_data, ipreds)
 
 if __name__ == '__main__':
     print('DO NOT INVOKE ME')

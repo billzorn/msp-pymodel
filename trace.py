@@ -317,6 +317,12 @@ def main(args):
                 smt.round_3(blocks)
             elif smtround == 4:
                 smt.round_4(blocks)
+            elif smtround == 5:
+                smt.round_5(blocks)
+            elif smtround == 6:
+                smt.round_6(blocks)
+            elif smtround == 7:
+                smt.round_7(blocks)
 
 
 if __name__ == '__main__':
