@@ -1,5 +1,7 @@
 # smt bindings through z3
 
+import pickle
+
 import z3
 z3.set_option(max_args=10000000, max_lines=1000000, max_depth=10000000, max_visited=1000000)
 
@@ -135,7 +137,7 @@ def do_round_cx(blocks, mk_add_constraint, z3_data, cx_max):
     else:
         print('Done. Did not find a satisfying assignment after discarding {:d} counterexamples.'
               .format(cx_count[0]))
-    return success
+    return success, s
 
 def do_round_instr_subset(blocks, mk_add_constraint, z3_data, ipreds):
     add_constraint = mk_add_constraint(ipreds, blacklist_std, z3_data)
@@ -170,7 +172,7 @@ def do_round_instr_subset(blocks, mk_add_constraint, z3_data, ipreds):
     else:
         print('Did not find a satisfying assignment. {:d} control predicates remain.'
               .format(len(s_preds)))
-    return success
+    return success, s
 
 # datatype definitions
 
@@ -289,7 +291,8 @@ def round_1(blocks):
     time_fn = z3.Function('time_r1', inst_dt, z3.IntSort())
 
     z3_data = (inst_dt, time_fn, [time_fn])
-    if not do_round_cx(blocks, mk_add_constraint_individual, z3_data, cx_max):
+    success, solver = do_round_cx(blocks, mk_add_constraint_individual, z3_data, cx_max)
+    if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr, z3_data, ipreds)
 
 def mk_add_constraint_individual_r(predicates, pred_blocks, z3_data):
@@ -339,7 +342,8 @@ def round_2(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rdst])
-    if not do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max):
+    success, solver = do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
+    if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
 
 def round_3(blocks):
@@ -366,7 +370,8 @@ def round_3(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rdst, time_fn_rsrc])
-    if not do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max):
+    success, solver = do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
+    if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
 
 def round_4(blocks):
@@ -401,7 +406,8 @@ def round_4(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst])
-    if not do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max):
+    success, solver = do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
+    if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
 
 def round_5(blocks):
@@ -439,7 +445,8 @@ def round_5(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst])
-    if not do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max):
+    success, solver = do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
+    if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
 
 # more complex rounds that pass state of previous instructions too
@@ -514,7 +521,8 @@ def round_6(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst, time_fn_prev])
-    if not do_round_cx(blocks, mk_add_constraint_individual_prev, z3_data, cx_max):
+    success, solver = do_round_cx(blocks, mk_add_constraint_individual_prev, z3_data, cx_max)
+    if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_prev, z3_data, ipreds)
 
 # Just reporting the previous instruction doesn't work. Let's try carrying some state along.
@@ -595,32 +603,372 @@ def round_7(blocks):
 
     z3_data = (time_fn, state_fn, state_fn_init, 
                [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst, state_fn_default, state_fn_init])
-    if not do_round_cx(blocks, mk_add_constraint_individual_state, z3_data, cx_max):
+    success, solver = do_round_cx(blocks, mk_add_constraint_individual_state, z3_data, cx_max)
+    if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_state, z3_data, ipreds)
+    else:
+        create_model_table_7(solver, z3_data, 'NEW_model.pickle')
+
+def split_function_string(fstr):
+    lines = fstr.strip().strip('[]').split('\n')
+    cases = []
+    for line in lines:
+        (args, result) = line.split('->')
+        args = args.strip().strip('()')
+        arg = tuple(a.strip() for a in args.split(','))
+        res = result.strip().strip(',')
+        cases.append((arg, res))
+    return cases
+
+def classify_instr_7():
+    i_noreg = []
+    i_rsrc = []
+    i_rdst = []
+    i_rsrc_rdst = []
+    for ins in isa.ids_ins:
+        iname = smt_iname(ins)
+        if ins.fmt in {'fmt1'} and (ins.smode in {'@Rn', '@Rn+'} or ins.dmode in {'Rn'}):
+            if   ins.smode in {'@Rn', '@Rn+'} and ins.dmode in {'Rn'}:
+                i_rsrc_rdst.append(iname)
+            elif ins.smode in {'@Rn', '@Rn+'}:
+                i_rsrc.append(iname)
+            else:
+                i_rdst.append(iname)
+        elif ins.name in {'PUSH', 'CALL'} and ins.smode in {'X(Rn)'}:
+            i_rsrc.append(iname)
+        else:
+            i_noreg.append(iname)
+    return i_noreg, i_rsrc, i_rdst, i_rsrc_rdst
+
+def get_state_id_7(statestr):
+    return int(statestr.split('_')[-1].strip())
+
+def create_model_table_7(solver, z3_data, pname):
+    (time_fn, state_fn, state_fn_init, 
+     [time_fn_noreg, 
+      time_fn_rsrc, 
+      time_fn_rdst, 
+      time_fn_rsrc_rdst, 
+      state_fn_default, 
+      state_fn_init],) = z3_data
+    
+    model = solver.model()
+    noreg_strings = str(model[time_fn_noreg])
+    rsrc_strings = str(model[time_fn_rsrc])
+    rdst_strings = str(model[time_fn_rdst])
+    rsrc_rdst_strings = str(model[time_fn_rsrc_rdst])
+    state0_strings = str(model[state_fn_init])
+    state_strings = str(model[state_fn_default])
+
+    inames = {smt_iname(ins) : ins for ins in isa.ids_ins}
+    i_noreg, i_rsrc, i_rdst, i_rsrc_rdst = classify_instr_7()
+    states = [0, 1]
+    state_default = get_state_id_7(state0_strings)
+
+    noreg_pool = set([(s, x) for s in states for x in i_noreg])
+    rsrc_pool = set([(s, x, r) for s in states for x in i_rsrc for r in smt_rnames.values()])
+    rdst_pool = set([(s, x, r) for s in states for x in i_rdst for r in smt_rnames.values()])
+    rsrc_rdst_pool = set([(s, x, rs, rd) 
+                          for s in states 
+                          for x in i_rsrc_rdst 
+                          for rs in smt_rnames.values() 
+                          for rd in smt_rnames.values()])
+
+    # build the timing table
+
+    ttab = {}
+
+    noreg_else = None
+    for arg, res in split_function_string(noreg_strings):
+        if arg == ('else',):
+            noreg_else = int(res)
+        else:
+            (statestr, iname) = arg
+            state = get_state_id_7(statestr)
+            if (state, iname) in noreg_pool:
+                noreg_pool.remove((state, iname))
+                ttab[(state, iname, None, None)] = int(res)
+            else:
+                print('not in pool: {:s}'.format(repr((state, iname))))
+    print('noreg_pool has {:d} remaining entries'.format(len(noreg_pool)))
+    dadds = 0
+    sdefs = 0
+    for state, iname in noreg_pool:
+        if 'DADD' in iname:
+            dadds += 1
+            ttab[(state, iname, None, None)] = None
+        elif (state_default, iname, None, None) in ttab:
+            sdefs += 1
+            ttab[(state, iname, None, None)] = ttab[(state_default, iname, None, None)]
+        else:
+            ins = inames[iname]
+            if ins.name in {'RETI'} and ins.smode not in {'Rn'}:
+                print('invalid: {:d} {:s}'.format(state, iname))
+                ttab[(state, iname, None, None)] = None
+            elif ins.name in {'CALL'} and ins.smode in {'#1'}:
+                print('invalid: {:d} {:s}'.format(state, iname))
+                ttab[(state, iname, None, None)] = None
+            elif ins.name in {'RRC', 'SWPB', 'RRA', 'SXT'} and ins.smode in {'#1', '#@N', '#N'}:
+                print('invalid: {:d} {:s}'.format(state, iname))
+                ttab[(state, iname, None, None)] = None
+            else:
+                print('using else {:d} for {:s}'.format(noreg_else, repr((state, iname))))
+                ttab[(state, iname, None, None)] = noreg_else
+    print('excluded {:d} dadds, inferred {:d} behaviors from default state'.format(dadds, sdefs))
+
+    rsrc_else = None
+    for arg, res in split_function_string(rsrc_strings):
+        if arg == ('else',):
+            rsrc_else = int(res)
+        else:
+            (statestr, iname, rname) = arg
+            state = get_state_id_7(statestr)
+            if (state, iname, rname) in rsrc_pool:
+                rsrc_pool.remove((state, iname, rname))
+                ttab[(state, iname, rname, None)] = int(res)
+            else:
+                print('not in pool: {:s}'.format(repr((state, iname, rname))))
+    print('rsrc_pool has {:d} remaining entries'.format(len(rsrc_pool)))
+    dadds = 0
+    sdefs = 0
+    invmode = 0
+    rnone = 0
+    for state, iname, rname in rsrc_pool:
+        if 'DADD' in iname:
+            dadds += 1
+            ttab[(state, iname, rname, None)] = None
+        elif (state_default, iname, rname, None) in ttab:
+            sdefs += 1
+            ttab[(state, iname, rname, None)] = ttab[(state_default, iname, rname, None)]
+        elif rname == smt_rnames[-1]:
+            rnone += 1
+            ttab[(state, iname, rname, None)] = None
+        else:
+            ins = inames[iname]
+            if ins.smode in {'@Rn', '@Rn+'} and rname in {smt_rnames[0]}:
+                invmode += 1
+                ttab[(state, iname, rname, None)] = None
+            elif ins.smode in {'X(Rn)'} and rname in {smt_rnames[0], smt_rnames[2], smt_rnames[3]}:
+                invmode += 1
+                ttab[(state, iname, rname, None)] = None
+            else:
+                print('using else {:d} for {:s}'.format(rsrc_else, repr((state, iname, rname))))
+                ttab[(state, iname, rname, None)] = rsrc_else
+    print('excluded {:d} dadds, {:d} invmode, {:d} rnone, inferred {:d} behaviors from default state'
+          .format(dadds, invmode, rnone, sdefs))
+
+    rdst_else = None
+    for arg, res in split_function_string(rdst_strings):
+        if arg == ('else',):
+            rdst_else = int(res)
+        else:
+            (statestr, iname, rname) = arg
+            state = get_state_id_7(statestr)
+            if (state, iname, rname) in rdst_pool:
+                rdst_pool.remove((state, iname, rname))
+                ttab[(state, iname, None, rname)] = int(res)
+            else:
+                print('not in pool: {:s}'.format(repr((state, iname, rname))))
+    print('rdst_pool has {:d} remaining entries'.format(len(rdst_pool)))
+    dadds = 0
+    sdefs = 0
+    invmode = 0
+    rnone = 0
+    for state, iname, rname in rdst_pool:
+        if 'DADD' in iname:
+            dadds += 1
+            ttab[(state, iname, None, rname)] = None
+        elif (state_default, iname, None, rname) in ttab:
+            sdefs += 1
+            ttab[(state, iname, None, rname)] = ttab[(state_default, iname, None, rname)]
+        elif rname == smt_rnames[-1]:
+            rnone += 1
+            ttab[(state, iname, None, rname)] = None
+        else:
+            ins = inames[iname]
+            if ins.smode in {'#1'} and rname in {smt_rnames[0], smt_rnames[2]}:
+                invmode += 1
+                ttab[(state, iname, None, rname)] = None
+            else:
+                print('using else {:d} for {:s}'.format(rdst_else, repr((state, iname, rname))))
+                ttab[(state, iname, None, rname)] = rdst_else
+    print('excluded {:d} dadds, {:d} invmode, {:d} rnone, inferred {:d} behaviors from default state'
+          .format(dadds, invmode, rnone, sdefs))
+
+
+    rsrc_rdst_else = None
+    for arg, res in split_function_string(rsrc_rdst_strings):
+        if arg == ('else',):
+            rsrc_rdst_else = int(res)
+        else:
+            (statestr, iname, rsname, rdname) = arg
+            state = get_state_id_7(statestr)
+            if (state, iname, rsname, rdname) in rsrc_rdst_pool:
+                rsrc_rdst_pool.remove((state, iname, rsname, rdname))
+                ttab[(state, iname, rsname, rdname)] = int(res)
+            else:
+                print('not in pool: {:s}'.format(repr((state, iname, rsname, rdname))))
+    print('rsrc_rdst_pool has {:d} remaining entries'.format(len(rsrc_rdst_pool)))
+    dadds = 0
+    sdefs = 0
+    invmode = 0
+    rnone = 0
+    for state, iname, rsname, rdname in rsrc_rdst_pool:
+        if 'DADD' in iname:
+            dadds += 1
+            ttab[(state, iname, rsname, rdname)] = None
+        elif (state_default, iname, rsname, rdname) in ttab:
+            sdefs += 1
+            ttab[(state, iname, rsname, rdname)] = ttab[(state_default, iname, rsname, rdname)]
+        elif rsname == smt_rnames[-1] or rdname == smt_rnames[-1]:
+            rnone += 1
+            ttab[(state, iname, rsname, rdname)] = None
+        else:
+            ins = inames[iname]
+            if ins.smode in {'@Rn', '@Rn+'} and rsname in {smt_rnames[0]}:
+                invmode += 1
+                ttab[(state, iname, rsname, rdname)] = None
+            elif ins.smode in {'X(Rn)'} and rsname in {smt_rnames[0], smt_rnames[2], smt_rnames[3]}:
+                invmode += 1
+                ttab[(state, iname, rsname, rdname)] = None
+            elif ((ins.smode in {'#1'} or (ins.smode in {'@Rn', '@Rn+'} and rsname in {smt_rnames[2], smt_rnames[3]}))
+                  and rdname in {smt_rnames[0], smt_rnames[2]}):
+                invmode += 1
+                ttab[(state, iname, rsname, rdname)] = None
+            else:
+                print('using else {:d} for {:s}'.format(rsrc_rdst_else, repr((state, iname, rsname, rdname))))
+                ttab[(state, iname, rsname, rdname)] = rsrc_rdst_else
+    print('excluded {:d} dadds, {:d} invmode, {:d} rnone, inferred {:d} behaviors from default state'
+          .format(dadds, invmode, rnone, sdefs))
+    
+    # now do the state transitions
+
+    state_pool = set([(s, smt_iname(ins)) for s in states for ins in isa.ids_ins])
+    stab = {}
+    
+    state_else = None
+
+    state_else = None
+    for arg, res in split_function_string(state_strings):
+        if arg == ('else',):
+            state_else = get_state_id_7(res)
+        else:
+            (statestr, iname) = arg
+            state = get_state_id_7(statestr)
+            if (state, iname) in state_pool:
+                state_pool.remove((state, iname))
+                stab[(state, iname)] = get_state_id_7(res)
+            else:
+                print('not in pool: {:s}'.format(repr((state, iname))))
+    print('state_pool has {:d} remaining entries'.format(len(state_pool)))
+    for state, iname in state_pool:
+        stab[(state, iname)] = state_default
+    print('inferred all remaining transitions to default state.')
+
+    print(len(ttab))
+    print(len(stab))
+
+    with open(pname, 'wb') as f:
+        pickle.dump({'state_default':state_default, 'ttab':ttab, 'stab':stab}, f)
 
 if __name__ == '__main__':
-    print('DO NOT INVOKE ME')
-    exit(0)
+    import sys
 
-    Instruction = z3.Datatype('Instruction')
-    Instruction.declare('MOV')
-    Instruction.declare('ADD')
-    Instruction.declare('SUB')
-    Inst = Instruction.create()
+    with open(sys.argv[1], 'rb') as f:
+        obj = pickle.load(f)
+
+    state_default = obj['state_default']
+    ttab = obj['ttab']
+    stab = obj['stab']
+
+    inames = {smt_iname(ins) : ins for ins in isa.ids_ins}
+
+    print('timing table (invalid entries are not listed)')
     
-    I2 = create_instr_datatype()
-    print(I2)
+    for iname in sorted(inames.keys()):
+        if (0, iname, None, None) in ttab:
+            v = str(ttab[(0, iname, None, None)])
+            if v != 'None':
+                print('{:17s} | {:s}'.format(iname, v))
+                v1 = str(ttab[(1, iname, None, None)])
+                if v != v1:
+                    print('                1 | {:s}'.format(v1))
 
-    time_instr = z3.Function('time_instr', Inst, z3.IntSort())
+        s = ''
+        for rname in smt_rnames.values():
+            if (0, iname, rname, None) in ttab:
+                v = str(ttab[(0, iname, rname, None)])
+                if v == 'None':
+                    continue
+                s += ('      {:5s} {:5s} | {:s}\n'.format(rname, 'xxxxx', v))
+                v1 = str(ttab[(1, iname, rname, None)])
+                if v != v1:
+                    s += ('    1 {:5s} {:5s} | {:s}\n'.format(rname, 'xxxxx', v1))
+        if len(s) > 0:
+            print('{:17s} | {:s}'.format(iname, ''))
+            print(s, end='')
 
-    p1, p2, p3 = z3.Bools('p1 p2 p3')
-    x, y       = z3.Ints('x y')
-    s          = z3.Solver()
-    s.add(z3.Implies(p1, time_instr(Inst.__dict__['MOV']) > 0))
-    s.add(z3.Implies(p2, time_instr(Inst.MOV) == 3))
-    s.add(z3.Implies(p2, y < 1))
-    s.add(z3.Implies(p3, y > -3))
-    s.check(p1, p2, p3)
-    core = s.unsat_core()
-    print(repr(core))
-    print(s.model())
+        s = ''
+        for rname in smt_rnames.values():
+            if (0, iname, None, rname) in ttab:
+                v = str(ttab[(0, iname, None, rname)])
+                if v == 'None':
+                    continue
+                s += ('      {:5s} {:5s} | {:s}\n'.format('xxxxx', rname, v))
+                v1 = str(ttab[(1, iname, None, rname)])
+                if v != v1:
+                    s += ('    1 {:5s} {:5s} | {:s}\n'.format('xxxxx', rname, v1))
+        if len(s) > 0:
+            print('{:17s} | {:s}'.format(iname, ''))
+            print(s, end='')
+
+        s = ''
+        for rsname in smt_rnames.values():
+            for rdname in smt_rnames.values():
+                if (0, iname, rsname, rdname) in ttab:
+                    v = str(ttab[(0, iname, rsname, rdname)])
+                    if v == 'None':
+                        continue
+                    s += ('      {:5s} {:5s} | {:s}\n'.format(rsname, rdname, v))
+                    v1 = str(ttab[(1, iname, rsname, rdname)])
+                    if v != v1:
+                        s += ('      {:5s} {:5s} | {:s}\n'.format(rsname, rdname, v1))
+        if len(s) > 0:
+            print('{:17s} | {:s}'.format(iname, ''))
+            print(s, end='')
+
+    print('\nstate transitions: (unlisted transitions are to state 0)')
+
+    for iname in sorted(inames.keys()):
+        t0 = stab[(0, iname)]
+        t1 = stab[(1, iname)]
+
+        if t0 == 1 or t1 == 1:
+            print('{:17s} : 0 -> {:d}'.format(iname, t0))
+            print('                    1 -> {:d}'.format(t1))
+
+    # print('DO NOT INVOKE ME')
+    # exit(0)
+
+    # Instruction = z3.Datatype('Instruction')
+    # Instruction.declare('MOV')
+    # Instruction.declare('ADD')
+    # Instruction.declare('SUB')
+    # Inst = Instruction.create()
+    
+    # I2 = create_instr_datatype()
+    # print(I2)
+
+    # time_instr = z3.Function('time_instr', Inst, z3.IntSort())
+
+    # p1, p2, p3 = z3.Bools('p1 p2 p3')
+    # x, y       = z3.Ints('x y')
+    # s          = z3.Solver()
+    # s.add(z3.Implies(p1, time_instr(Inst.__dict__['MOV']) > 0))
+    # s.add(z3.Implies(p2, time_instr(Inst.MOV) == 3))
+    # s.add(z3.Implies(p2, y < 1))
+    # s.add(z3.Implies(p3, y > -3))
+    # s.check(p1, p2, p3)
+    # core = s.unsat_core()
+    # print(repr(core))
+    # print(s.model())

@@ -238,7 +238,11 @@ def explain_diff(diff):
     for addr in sorted(map(str, diff)):
         if addr == 'regs':
             try:
-                regdiff = diff['regs'][0]
+                if 0 in diff['regs']:
+                    regdiff = diff['regs'][0]
+                else:
+                    # stupid hackery to get around json screwing up keys
+                    regdiff = diff['regs']['0']
                 for i in range(len(regdiff)):
                     print('-- driver {:d} registers --'.format(i))
                     print(describe_regs(regdiff[i]))
@@ -249,11 +253,13 @@ def explain_diff(diff):
                 print_dict(diff['regs'])
                 print('')
         else:
-            addr = int(addr)
+            # more json hackery
+            if addr not in diff:
+                addr = int(addr)
             regions = diff[addr]
             for i in range(len(regions)):
                 print('-- driver {:d} --'.format(i))
-                print(triple_summarize(regions[i], addr))
+                print(triple_summarize(regions[i], int(addr)))
 
 def explain_bitval(firstbit, lastbit, bitval, bits = 16):
     print('({:d}, {:d}) : {:d} [{:d}]'.format(firstbit, lastbit, bitval, bits))
@@ -441,3 +447,27 @@ class Write7z(object):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.p7z.stdin.close()
+
+def recursive_container_count(obj):
+    dicts = 0
+    lists = 0
+    tuples = 0
+    if isinstance(obj, dict):
+        dicts += 1
+        for k in obj:
+            d, l, t = recursive_container_count(obj[k])
+            dicts += d
+            lists += l
+            tuples += t
+    elif isinstance(obj, list) or isinstance(obj, tuple):
+        if isinstance(obj, list):
+            lists += 1
+        else:
+            tuples += 1
+        for subobj in obj:
+            d, l, t = recursive_container_count(subobj)
+            dicts += d
+            lists += l
+            tuples += t
+    return dicts, lists, tuples
+

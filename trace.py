@@ -2,6 +2,8 @@
 
 # step through an executable under cosimulation and report errors
 
+#import objgraph
+
 import sys
 import os
 import json
@@ -94,10 +96,14 @@ def load_trace(jname):
 
 trace_suffix = '.trace.json.7z'
 
-def compute_mismatches(diff):
+def compute_mismatches(diff, verbosity):
     mismatches = {}
     for addr in diff:
-        if addr != 'regs':
+        if addr == 'regs':
+            if verbosity >= 1:
+                print('nonempty reg diff???')
+                utils.explain_diff(diff)
+        else:
             mems = diff[addr]
             assert len(mems) == 2
             assert len(mems[0]) == len(mems[1])
@@ -113,6 +119,8 @@ def mismatches_to_blocks(trace, mismatches, blocks):
     current = []
     in_region = False
     in_store = False
+    missing = 0
+    err = False
     for fields in trace:
         if is_timer_read(fields, 14):
             assert current == [] and in_region == False
@@ -128,13 +136,29 @@ def mismatches_to_blocks(trace, mismatches, blocks):
             assert in_region == False
             addr = is_reg_store(fields, 15)
             if addr > 0:
-                # print('{:s} | {:s}'.format(repr(addr), repr(current)))
-                blocks.append((addr, current, mismatches.pop(addr)))
+                if addr in mismatches:
+                    blocks.append((addr, current, mismatches.pop(addr)))
+                else:
+                    # print('MISSING {:s} | {:s}'.format(repr(addr), repr(current)))
+                    missing += 1
+                    err = True
                 current = []
                 in_store = False
 
         elif in_region:
             current.append(fields)
+
+    if err:
+        print('Unexpected blocks! {:d} blocks have no corresponding mismatches, {:d} unexplained mismatches in diff.'
+              .format(missing, len(mismatches)))
+
+    elif len(mismatches) > 0:
+        err = True
+        print('State mismatch! {:d} unexplained mismatches in diff.'
+              .format(len(mismatches)))
+        print(mismatches)
+
+    return err
 
 def arff_header():
     s = "@relation 'cycle_count'\n"
@@ -171,11 +195,22 @@ def create_json(blocks, jname):
         json.dump({'blocks':blocks}, f)
 
 def extract_json(jname):
-    with open(jname, 'rt') as f:
-        jobj = json.load(f)
-    return jobj['blocks']
+    if jname.endswith('.json.7z'):
+        with utils.Read7z(jname) as f:
+            reader = codecs.getreader('utf-8')
+            jobj = json.load(reader(f))
+        return jobj['blocks']
+    else:
+        with open(jname, 'rt') as f:
+            jobj = json.load(f)
+        return jobj['blocks']
 
 def walk_par(fn, targetdir, cargs, n_procs = 1, verbosity = 0):
+    if os.path.isfile(targetdir):
+        if verbosity >= 0:
+            print('target is a single file, processing directly')
+            return [fn((0, [('', targetdir)], cargs))]
+
     roots = set()
     worklists = [(i, [], cargs) for i in range(n_procs)]
     i = 0
@@ -198,7 +233,7 @@ def walk_par(fn, targetdir, cargs, n_procs = 1, verbosity = 0):
                   .format(i, targetdir, n_procs))
 
     if n_procs == 1:
-        return fn(worklists[0])
+        return [fn(worklists[0])]
     else:
         pool = multiprocessing.Pool(processes=n_procs)
         return pool.map(fn, worklists)
@@ -247,24 +282,35 @@ def walk_micros(testdir, check, execute, suffix = '.elf', abort_on_error = True,
               .format(n_procs, sum(counts)))
 
 def process_traces(args):
-    (k, files, (verbosity,)) = args
+    (k, files, (prefix, verbosity)) = args
     i = 0
+    errs = 0
     blocks = []
 
     for root, fname in files:
-        if fname.endswith(trace_suffix):
+        if fname.startswith(prefix) and fname.endswith(trace_suffix):
             i += 1
             jname = os.path.join(root, fname)
             diff, trace, iotrace = load_trace(jname)
-            mismatches = compute_mismatches(diff)
-            mismatches_to_blocks(trace, mismatches, blocks)
+            mismatches = compute_mismatches(diff, verbosity=verbosity)
+            err = mismatches_to_blocks(trace, mismatches, blocks)
+            if err:
+                print('  failures in trace {:s}'.format(jname))
+                errs += 1
+            elif verbosity >= 1:
+                print('  successful trace {:s}'.format(jname))
+            # if verbosity >= 2:
+            #     objgraph.show_growth()
+            #     print('{:d} blocks total'.format(len(blocks)))
+            #     print(utils.recursive_container_count(blocks))
 
     if verbosity >= 0:
-        print('processed {:d} traces to {:d} observed blocks, done'.format(i, len(blocks)))
+        print('processed {:d} traces to {:d} observed blocks, {:d} failures, done'
+              .format(i, len(blocks), errs))
     return i, blocks
 
-def walk_traces(testdir, verbosity = 0, n_procs = 1):
-    results = walk_par(process_traces, testdir, (verbosity,),
+def walk_traces(testdir, prefix = '', verbosity = 0, n_procs = 1):
+    results = walk_par(process_traces, testdir, (prefix, verbosity),
                        n_procs=n_procs, verbosity=verbosity)
 
     count = 0
@@ -283,32 +329,47 @@ def main(args):
     suffix = args.suffix
     check = args.check
     execute = args.execute
-    jname = args.json
+    jin_list = args.jsonin
+    jout = args.jsonout
     arffname = args.arff
     smtround = args.smt
     n_procs = args.ncores
     abort_on_error = not args.noabort
+    trprefix = args.trprefix
     verbosity = args.verbose
 
+    did_work = False
+
     if check or execute:
+        did_work = True
         walk_micros(testdir, check, execute, suffix=suffix, abort_on_error=abort_on_error,
                     n_procs=n_procs, verbosity=verbosity)
 
-    if jname or arffname or smtround > 0:
-        if jname:
-            if os.path.exists(jname):
-                blocks = extract_json(jname)
-            else:
-                blocks = walk_traces(testdir, verbosity=verbosity, n_procs=n_procs)
-                create_json(blocks, jname)
+    if jout or arffname or smtround > 0:
+        did_work = True
+        if jin_list:
+                
+            blocks = []
+            for jname in jin_list:
+                new_blocks = extract_json(jname)
+                if verbosity >= 0:
+                    print('read {:d} blocks from {:s}'
+                          .format(len(new_blocks), jname))
+                blocks += new_blocks
         else:
-            blocks = walk_traces(testdir, verbosity=verbosity, n_procs=n_procs)
+            blocks = walk_traces(testdir, prefix=trprefix, verbosity=verbosity, n_procs=n_procs)
+            
+        if jout:
+            create_json(blocks, jout)
+            if verbosity >= 0:
+                print('wrote {:d} blocks to {:s}'.format(len(blocks), jout))
 
         if arffname:
             create_arff(blocks, arffname)
+            if verbosity >= 0:
+                print('wrote {:d} blocks to {:s}'.format(len(blocks), arffname))
 
         if smtround > 0:
-
             if   smtround == 1:
                 smt.round_1(blocks)
             elif smtround == 2:
@@ -324,12 +385,15 @@ def main(args):
             elif smtround == 7:
                 smt.round_7(blocks)
 
+    if not did_work:
+        print('Nothing to do.')
+
 
 if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('testdir',
+    parser.add_argument('testdir', nargs='?', default='.',
                         help='directory to look for files in')
     parser.add_argument('suffix', nargs='?', default='.elf',
                         help='suffix for executable micro files')
@@ -337,7 +401,9 @@ if __name__ == '__main__':
                         help='check micros for incorrect behavior under emulation')
     parser.add_argument('-e', '--execute', action='store_true',
                         help='execute micros against real hardware')
-    parser.add_argument('-j', '--json',
+    parser.add_argument('-ji', '--jsonin', nargs='+',
+                        help='read constraint blocks from json files')
+    parser.add_argument('-jo', '--jsonout',
                         help='accumulate constraint blocks into raw json file')
     parser.add_argument('-a', '--arff',
                         help='accumulate data into arff file')
@@ -349,6 +415,9 @@ if __name__ == '__main__':
                         help='do not abort after first failure')
     parser.add_argument('-ncores', type=int, default=1,
                         help='run in parallel on this many cores')
+    parser.add_argument('-trprefix', default='',
+                        help='only read traces with this prefix')
+
     args = parser.parse_args()
 
     main(args)
