@@ -1,36 +1,81 @@
 .section .resetvec, "aw"
 .balign 2
-	.word	0x4406
+	.word	_start
 
+.section .rodata
+.balign 2
+.data0:	.word	0
+.data1:	.word	0
+.data2:	.word	0
+.data3:	.word	0
+.data4:	.word	0
+.data5:	.word	0
+.data6:	.word	0
+.data7:	.word	0
+	
 .section .text
 .balign 2
-	MOV	#23168, &0x015c
+_start:	
+	;; disable watchdog timer
+	MOV.W	#23168, &0x015C
+
+	;; timer init
+	MOV.W	#16, &0x0342
+	MOV.W	#512, &0x0340
+
+	;; timer start
+	MOV.W	#0, &0x0350
+	MOV.W	#-15536, &0x0352
+	BIS.W	#16, &0x0340
 
 	;; test code here!
 
-	mov     #8350,  r1 ;#0x209e
-	mov     #3836,  r5 ;#0x0efc
-	sub.b   @r1+,   3690(r5) ; 0x0e6a
-	mov     #8943,  r4	;#0x22ef
-	mov     #273,   r5	;#0x0111
-	sub     @r4+,   8423(r5) ; 0x20e7
-	mov     #7184,  r1	;#0x1c10
-	sub     @r1+,   r5	;
-	mov     #8944,  r4	;#0x22f0
-	sub.b   @r4+,   r5	;
+	MOV.W	#0x1d00, R1
+	CLR	SR
 	
-	mov     #8334,  r1	;#0x208e
-	sub     @r1+,   300	; PC rel. ???
+	MOV.W	&0x0350, R8
+	ADDC.W	R1, 0x1000(PC)
+	PUSH.W	@R1+
+	
+	MOV.W	&0x0350, R9
+	SUB.W	R8, R9
+	MOV.W	R9 , &.data0
 
-	mov     #7819,  r4	;#0x1e8b
-	sub     @r4+,   300	; PC rel. ???
+	
+ 	MOV.W	#0x1d00, R1
+	CLR	SR
+	
+	MOV.W	&0x0350, R10
+	ADDC.W	R0, 0x1000(PC)
+	PUSH.W	@R2+
+	
+	MOV.W	&0x0350, R11
+	SUB.W	R10, R11
+	MOV.W	R11, &.data1
 
-	;; had a bug
-	mov     #7545,  r1	#0x1d79
-	sub     @r1+,   &0x2175	
 	
-	mov     #8240,  r4	;#0x2030
-	sub     @r4+,   &0x1da7	;
+	MOV.W	#0x1d00, R1
+	CLR	SR
 	
+	MOV.W	&0x0350, R12
+	PUSH.W	@R1+
+	
+	MOV.W	&0x0350, R13
+	SUB.W	R12, R13
+	MOV.W	R13, &.data2
+
+	
+	MOV.W	#0x1d00, R1
+	CLR	SR
+	
+	MOV.W	&0x0350, R14
+	PUSH.W	@R2+
+	
+	MOV.W	&0x0350, R15
+	SUB.W	R14, R15
+	MOV.W	R15, &.data3
+
+	
+	;;  halt
 	.word	0x3fff	; halt
 	.word	0x3fff	; halt

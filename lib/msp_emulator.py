@@ -7,7 +7,7 @@ import msp_elftools as elftools
 from msp_isa import isa
 
 class Emulator(object):
-    def __init__(self, tracing = False, verbosity = 0):
+    def __init__(self, tracing = False, tinfo = None, verbosity = 0):
         self.tracing = tracing
         self.trace = []
         self.iotrace = model.iotrace_init()
