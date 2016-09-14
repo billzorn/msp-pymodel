@@ -3,7 +3,9 @@
 import utils
 import msp_base as base
 import msp_fr5969_model as model
+import msp_peripheral_timer as peripheral_timer
 import msp_elftools as elftools
+import smt
 from msp_isa import isa
 
 class Emulator(object):
@@ -19,7 +21,16 @@ class Emulator(object):
         else:
             self.state = model.Model()
 
-        self._mmio_default()
+        if tinfo is None:
+            self.timing = False
+            self._mmio_default()
+        else:
+            self.timing = True
+            self._timer_default()
+            self.timer_state_default = tinfo['state_default']
+            self.timer_ttab = tinfo['ttab']
+            self.timer_stab = tinfo['stab']
+            self._timer_reset()
 
         if self.verbosity >= 3:
             print('created {:s}'.format(str(self)))
@@ -32,6 +43,44 @@ class Emulator(object):
         # timerA (unimplemented)
         for addr in [0x0340, 0x0341, 0x0342, 0x0343, 0x0350, 0x0351, 0x0352, 0x0353]:
             self.state.mmio_handle_default(addr)
+
+    def _timer_default(self):
+        # watchdog (unimplemented)
+        for addr in [0x15c, 0x15d]:
+            self.state.mmio_handle_default(addr)
+        # call out to timer module
+        self.timer_A = peripheral_timer.Peripheral_Timer()
+        self.timer_A.attach_timer(self.state, peripheral_timer.timer_A_base)
+
+    def _timer_reset(self):
+        self.timer_cycles = 0
+        self.timer_state = self.timer_state_default
+
+    def _timer_update(self, ins, fields):
+        cycles = None
+        iname = smt.smt_iname(ins)
+        if (self.timer_state, iname, None, None) in self.timer_ttab:
+            assert cycles is None
+            cycles = self.timer_ttab[(self.timer_state, iname, None, None)]
+            assert cycles is not None
+        rsname = smt.smt_rsrc(fields)
+        if (self.timer_state, iname, rsname, None) in self.timer_ttab:
+            assert cycles is None
+            cycles = self.timer_ttab[(self.timer_state, iname, rsname, None)]
+            assert cycles is not None
+        rdname = smt.smt_rdst(fields)
+        if (self.timer_state, iname, None, rdname) in self.timer_ttab:
+            assert cycles is None
+            cycles = self.timer_ttab[(self.timer_state, iname, None, rdname)]
+            assert cycles is not None
+        if (self.timer_state, iname, rsname, rdname) in self.timer_ttab:
+            assert cycles is None
+            cycles = self.timer_ttab[(self.timer_state, iname, rsname, rdname)]
+            assert cycles is not None
+        assert cycles is not None and cycles >= 0
+        self.timer_state = self.timer_stab[self.timer_state, iname]
+        self.timer_cycles = self.timer_cycles + cycles
+        return cycles
     
     def reset(self):
         reset_pc = model.mk_read16(self.state.read8)(model.resetvec)
@@ -118,6 +167,11 @@ class Emulator(object):
 
 
             # end
+
+        # update the timer if we're doing that
+        if self.timing:
+            cycles = self._timer_update(ins, fields)
+            self.timer_A.elapse(cycles)
 
         if self.tracing and self.verbosity >= 2:
             print('----')

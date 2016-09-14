@@ -174,9 +174,9 @@ def repl(cosim, master_idx):
 
         prompt()
 
-def main(fname = None, emulate = False, verbosity = 1):
+def main(fname = None, emulate = False, tinfo = None, verbosity = 1):
     mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
-    mulator = Emulator(tracing=True, verbosity=verbosity)
+    mulator = Emulator(tracing=True, tinfo=tinfo, verbosity=verbosity)
 
     if emulate:
         cosim = Cosim([mulator], [False], mmap)
@@ -202,12 +202,15 @@ def main(fname = None, emulate = False, verbosity = 1):
 if __name__ == '__main__':
     import subprocess
     import argparse
+    import pickle
     parser = argparse.ArgumentParser()
 
     parser.add_argument('fname', nargs='?', default=None,
                         help='initial file to program on startup')
     parser.add_argument('-e', '--emulator', action='store_true',
                         help='run with emulator only')
+    parser.add_argument('-t', '--timing', 
+                        help='use this pickled timing model to emulate Timer_A')
     parser.add_argument('-v', '--verbose', type=int, default=1,
                         help='verbosity level')
     
@@ -232,5 +235,11 @@ if __name__ == '__main__':
             scratch_dir = os.path.join(script_dir, 'scratch')
             fname = os.path.join(scratch_dir, 'assembled.elf')
 
-    main(fname=fname, emulate = args.emulator, verbosity=args.verbose)
+    if args.timing:
+        with open(args.timing, 'rb') as f:                  
+            tinfo = pickle.load(f)
+    else:
+        tinfo = None
+
+    main(fname=fname, emulate=args.emulator, tinfo=tinfo, verbosity=args.verbose)
     exit(0)

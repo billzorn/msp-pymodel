@@ -178,7 +178,7 @@ def do_round_instr_subset(blocks, mk_add_constraint, z3_data, ipreds):
 
 def smt_iname(ins):
     if ins is None:
-        return smt_iname(prev_ins)
+        return 'nofmt_inone_x_x'
     else:
         smode_ident = utils.mode_ident[ins.smode]
         dmode_ident = utils.mode_ident[ins.dmode]
