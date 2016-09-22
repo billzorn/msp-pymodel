@@ -231,7 +231,7 @@ def load(state, fname, restore_regs = True, verbosity = 0):
         segments = extract_segments(f, header)
         for segment in segments:
             v_to_p[segment['p_vaddr']] = segment['p_paddr']
-                
+
         sections = extract_sections(f, header)
         for section in sections:
             # special section for storing registers from dumps
@@ -247,6 +247,9 @@ def load(state, fname, restore_regs = True, verbosity = 0):
                 vaddr = section['sh_addr']
                 if vaddr in v_to_p:
                     addr = v_to_p[vaddr]
+                elif vaddr == 0:
+                    print('WARNING: section located at address 0, ignoring')
+                    continue
                 else:
                     addr = vaddr
                 data = section['data']

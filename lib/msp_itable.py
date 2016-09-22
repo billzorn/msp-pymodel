@@ -95,8 +95,8 @@ fmt2 = {
         '#1'    : (0, msp_fmt2.mk_readfields_src_cg1, msp_fmt2.mk_writefields_src_cg1, 1,       3,   ),
         '@Rn'   : (0, msp_fmt2.mk_readfields_src_ind, msp_fmt2.mk_writefields_src_ind, 2,       None,),
         '@Rn+'  : (0, msp_fmt2.mk_readfields_src_ai,  msp_fmt2.mk_writefields_src_ai,  3,       None,),
-        '#@N'   : (0, msp_fmt2.mk_readfields_src_N,   msp_fmt2.mk_writefields_src_N,   2,       0,   ),
-        '#N'    : (0, msp_fmt2.mk_readfields_src_N,   msp_fmt2.mk_writefields_src_N,   3,       0,   ),
+        '#@N'   : (2, msp_fmt2.mk_readfields_src_N,   msp_fmt2.mk_writefields_src_N,   2,       0,   ),
+        '#N'    : (2, msp_fmt2.mk_readfields_src_N,   msp_fmt2.mk_writefields_src_N,   3,       0,   ),
     },
 }
 
