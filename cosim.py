@@ -209,7 +209,7 @@ if __name__ == '__main__':
                         help='initial file to program on startup')
     parser.add_argument('-e', '--emulator', action='store_true',
                         help='run with emulator only')
-    parser.add_argument('-t', '--timing', 
+    parser.add_argument('-t', '--timing',
                         help='use this pickled timing model to emulate Timer_A')
     parser.add_argument('-v', '--verbose', type=int, default=1,
                         help='verbosity level')
@@ -236,7 +236,7 @@ if __name__ == '__main__':
             fname = os.path.join(scratch_dir, 'assembled.elf')
 
     if args.timing:
-        with open(args.timing, 'rb') as f:                  
+        with open(args.timing, 'rb') as f:
             tinfo = pickle.load(f)
     else:
         tinfo = None

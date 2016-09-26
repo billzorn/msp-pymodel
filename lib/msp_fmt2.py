@@ -18,6 +18,21 @@ mk_readfields_src_ai  = fmt1.mk_readfields_src_ai
 mk_readfields_src_N   = fmt1.mk_readfields_src_N
 mk_readfields_src_cg1 = fmt1.mk_readfields_src_cg1
 
+# ...except for the strange behavior where PUSH and CALL see r1-2
+# in idx mode, as if they'd already decremented the register
+# when they read from it. Yes, only in idx mode. the other modes
+# see the pre-decrement value of r1 as expected.
+
+def mk_readfields_src_idx_push_call(ins):
+    def keepreading(state, fields):
+        rsrc = fields['rsrc']
+        offset = state.readreg(rsrc)
+        if rsrc == 1:
+            offset = instr.regadd(offset, -2)
+        addr.compute_and_read_addr('src', state, fields, offset=offset)
+        return
+    return addr.mk_readfields_cg(ins, keepreading)
+
 # destination modes, which are kind of like the source modes
 
 def mk_writefields_src_Rn(ins):
@@ -59,7 +74,7 @@ def mk_writefields_src_cg1(ins):
 def execute_rrc(fields):
     bits = arith.howmanybits(fields)
     arith.execute_shift(fields,
-                        lambda src, sr_fields: ((src >> 1) & (~(1 << (bits-1)))) | sr_fields['c'])
+                        lambda src, sr_fields: ((src >> 1) & (~(1 << (bits-1)))) | (sr_fields['c'] << (bits-1)))
     return
 
 def execute_swpb(fields):

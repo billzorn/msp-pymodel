@@ -4,6 +4,7 @@
 
 import sys
 import os
+import pickle
 
 libdir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib')
 sys.path.append(libdir)
@@ -50,16 +51,26 @@ def step_and_sync(cosim, maxter_idx, mulator):
     return pc
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print('usage: {:s} <ELF>'.format(sys.argv[0]))
+    if len(sys.argv) < 3:
+        print('usage: {:s} <ELF> [MODEL]'.format(sys.argv[0]))
         exit(1)
 
     fname = sys.argv[1]
+    if len(sys.argv) >= 3:
+        tname = sys.argv[2]
+
+    if tname:
+        with open(tname, 'rb') as f:
+            tinfo = pickle.load(f)
+    else:
+        tinfo = None
+
+
     sync_every = 100
 
     # bring up cosim
     with MSPdebug(verbosity=0) as driver:
-        mulator = Emulator(verbosity=0, tracing=True)
+        mulator = Emulator(verbosity=0, tracing=True, tinfo=tinfo)
         mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
         cosim = Cosim([driver, mulator], [True, False], mmap)
         master_idx = 0

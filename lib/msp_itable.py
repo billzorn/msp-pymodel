@@ -105,6 +105,11 @@ def create_fmt2(name, smode, verbosity = 0):
     ins = instr.Instr(opc, fmt2['fields'], name=name, fmt=fmt2_name, verbosity=verbosity)
 
     n, mk_readfields, mk_writefields, a_bitval, r_bitval = fmt2['smodes'][smode]
+
+    # weird special case
+    if name in {'PUSH', 'CALL'} and smode in {'X(Rn)'}:
+        mk_readfields = msp_fmt2.mk_readfields_src_idx_push_call
+
     addr.set_fmt2_src(ins, smode, n, mk_readfields, mk_writefields, a_bitval,
                       r_bitval=r_bitval, verbosity=verbosity)
 
@@ -150,6 +155,41 @@ def create_jump(name, verbosity = 0):
     ins.execute = execute
     return ins
 
+# temporary stub for fmt1 extension word
+def create_ext(verbosity = 0):
+    ins = instr.Instr(3, {'data':(0,10),'opc':(11,15)}, name='EXT', fmt='EXT', verbosity=verbosity)
+    if verbosity >= 3:
+        print('created EXT stub')
+    return ins
+
+# temporary stub for pushm/popm
+fields_pushm_popm = {
+    'rsrc' : (0, 3, ),
+    'n'    : (4, 7, ),
+    'aw'   : (8, 8, ),
+    'opc'  : (9, 15,),
+}
+def create_pushm_popm(opc, name, verbosity = 0):
+    ins = instr.Instr(opc, fields_pushm_popm, name=name, fmt='EXT', verbosity=verbosity)
+    if verbosity >= 3:
+        print('created pusm / popm stub for {:s}, opcode {:02x}'.format(name, opc))
+    return ins
+
+# temporary stub for rrcm/rram/rlam/rrum
+fields_rx = {
+    'rsrc'  : (0,  3, ),
+    'aw'    : (4,  4, ),
+    'opc'   : (5,  9, ),
+    'n'     : (10, 11,),
+    'group' : (12, 15,),
+}
+def create_rx(opc, name, verbosity = 0):
+    ins = instr.Instr(opc, fields_rx, name=name, fmt='EXT', verbosity=verbosity)
+    instr.set_bitval(ins.bits, 12, 15, 0, checkprev=True, preval='group')
+    if verbosity >= 3:
+        print('created rrcm/rram/rlam/rrum stub for {:s}, opcode {:02x}'.format(name, opc))
+    return ins
+
 def create_itable(verbosity = 0):
     itable = []
 
@@ -165,6 +205,17 @@ def create_itable(verbosity = 0):
     for name in sorted(jump['instructions']):
         itable.append(create_jump(name, verbosity=verbosity))
 
+    # temporary stub for fmt1 extension word
+    itable.append(create_ext(verbosity=verbosity))
+    # temporary stub for pushm/popm
+    itable.append(create_pushm_popm(0xa, 'PUSHM', verbosity=verbosity))
+    itable.append(create_pushm_popm(0xb, 'POPM', verbosity=verbosity))
+    # temporary stub for rrcm/rram/rlam/rrum
+    itable.append(create_rx(0x02, 'RRCM', verbosity=verbosity))
+    itable.append(create_rx(0x0a, 'RRAM', verbosity=verbosity))
+    itable.append(create_rx(0x12, 'RLAM', verbosity=verbosity))
+    itable.append(create_rx(0x1a, 'RRUM', verbosity=verbosity))
+
     return itable
 
 def create_fmap():
@@ -178,6 +229,14 @@ def create_fmap():
     add_to_fmap(fmap, sorted(fmt1['instructions']), fmt1_name)
     add_to_fmap(fmap, sorted(fmt2['instructions']), fmt2_name)
     add_to_fmap(fmap, sorted(jump['instructions']), jump_name)
+
+    # temporary stub for fmt1 extension word
+    add_to_fmap(fmap, ['EXT'], 'EXT')
+    # temporary stub for pushm/popm
+    add_to_fmap(fmap, ['PUSHM', 'POPM'], 'EXT')
+    # temporary stub for rrcm/rram/rlam/rrum
+    add_to_fmap(fmap, ['RRCM', 'RRAM', 'RLAM', 'RRUM'], 'EXT')    
+
     return fmap
 
 # sanity test

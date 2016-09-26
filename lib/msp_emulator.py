@@ -158,6 +158,7 @@ class Emulator(object):
 
 
             # # manual breakpoints / watchpoints
+
             # step_io = self.iotrace2[-1]
             # for addr, value in step_io['w']['mem']:
             #     if addr >= 0x6000:
@@ -165,8 +166,11 @@ class Emulator(object):
             #         utils.print_dict(step_io)
             #         raise base.Breakpoint('manual')
 
+            # if pc == 0x997c:
+            #     print(hex(pc))
+            #     raise base.Breakpoint('manual')
 
-            # end
+            # # end
 
         # update the timer if we're doing that
         if self.timing:
