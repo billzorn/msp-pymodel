@@ -77,14 +77,14 @@ fmt2 = {
         'opc'  : (7, 15,),
     },
     'instructions' : {
-    #    name     opc   execute                writefields_exec               instruction map
-        'RRC'  : (0x20, msp_fmt2.execute_rrc,  None,                     ), # 10xx | 000
-        'SWPB' : (0x21, msp_fmt2.execute_swpb, None,                     ), # 10xx | 080
-        'RRA'  : (0x22, msp_fmt2.execute_rra,  None,                     ), # 10xx | 100
-        'SXT'  : (0x23, msp_fmt2.execute_sxt,  None,                     ), # 10xx | 180
-        'PUSH' : (0x24, msp_fmt2.execute_push, msp_fmt2.writefields_push,), # 10xx | 200
-        'CALL' : (0x25, msp_fmt2.execute_call, msp_fmt2.writefields_call,), # 10xx | 280
-        'RETI' : (0x26, msp_fmt2.execute_reti, msp_fmt2.writefields_reti,), # 10xx | 300
+    #    name     opc   execute                mk_writefields_exec               instruction map
+        'RRC'  : (0x20, msp_fmt2.execute_rrc,  None,                        ), # 10xx | 000
+        'SWPB' : (0x21, msp_fmt2.execute_swpb, None,                        ), # 10xx | 080
+        'RRA'  : (0x22, msp_fmt2.execute_rra,  None,                        ), # 10xx | 100
+        'SXT'  : (0x23, msp_fmt2.execute_sxt,  None,                        ), # 10xx | 180
+        'PUSH' : (0x24, msp_fmt2.execute_push, msp_fmt2.mk_writefields_push,), # 10xx | 200
+        'CALL' : (0x25, msp_fmt2.execute_call, msp_fmt2.mk_writefields_call,), # 10xx | 280
+        'RETI' : (0x26, msp_fmt2.execute_reti, msp_fmt2.mk_writefields_reti,), # 10xx | 300
     },
     'smodes' : {
     #    smode     n  mk_readfields                   mk_writefields                   a_bitval r_bitval
@@ -101,20 +101,23 @@ fmt2 = {
 }
 
 def create_fmt2(name, smode, verbosity = 0):
-    opc, execute, writefields_exec = fmt2['instructions'][name]
+    opc, execute, mk_writefields_exec = fmt2['instructions'][name]
     ins = instr.Instr(opc, fmt2['fields'], name=name, fmt=fmt2_name, verbosity=verbosity)
 
     n, mk_readfields, mk_writefields, a_bitval, r_bitval = fmt2['smodes'][smode]
 
-    # weird special case
-    if name in {'PUSH', 'CALL'} and smode in {'X(Rn)'}:
-        mk_readfields = msp_fmt2.mk_readfields_src_idx_push_call
+    # weird special cases
+    if name in {'PUSH', 'CALL'}:
+        if smode in {'X(Rn)'}:
+            mk_readfields = msp_fmt2.mk_readfields_src_idx_push_call
+        elif smode in {'@Rn+'}:
+            mk_readfields = msp_fmt2.mk_readfields_src_ai_push_call
 
     addr.set_fmt2_src(ins, smode, n, mk_readfields, mk_writefields, a_bitval,
                       r_bitval=r_bitval, verbosity=verbosity)
 
-    if not writefields_exec is None:
-        ins.writefields = writefields_exec
+    if mk_writefields_exec is not None:
+        ins.writefields = mk_writefields_exec(ins)
     ins.execute = execute
     return ins
 

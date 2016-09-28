@@ -45,7 +45,7 @@ def mk_readfields_src_abs(ins):
 
 def mk_readfields_src_cg1(ins):
     def stopreading(state, fields):
-        raise base.RiskySuccess(fields)
+        raise base.UnknownBehavior('tried to keep reading after decoding cg for cg1 mode')
     return addr.mk_readfields_cg(ins, stopreading)
 
 def mk_readfields_src_ind(ins):
@@ -94,6 +94,17 @@ def keepreading_dst_Rn(ins, state, fields):
 
 def mk_writefields_dst_Rn(ins):
     def writefields_dst_Rn(state, fields):
+        # special check for some PC-related behavior
+        if fields['rdst'] == 0:
+            if fields['bw'] == 1 and ins.name not in {'CMP', 'BIT'}:
+                raise base.UnknownBehavior('fmt1 .B to PC')
+            elif fields['dst'] != fields['pc']:
+                raise base.UnknownBehavior('fmt1 indirect control flow: pc {:05x}, indirect to {:05x}'
+                                           .format(fields['pc'], fields['dst']))
+        # and for writes to unmodeled SR bits
+        elif fields['rdst'] == 2:
+            if fields['dst'] & ((~263) & 0xfffff) != 0:
+                raise base.UnknownBehavior('fmt1 invalid SR write: {:05x}'.format(fields['dst']))
         state.writereg(0, fields['pc'])
         state.writereg(fields['rdst'], fields['dst'])
         if not instr.is_sr_safe(ins):
