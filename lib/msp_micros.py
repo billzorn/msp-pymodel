@@ -620,7 +620,8 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                 setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
             # we need to do something here if we're autoincrementing
             if   ai_src_offset == 1:
-                info.overwrite_or_set_use(rsrc, saddr + ai_src_offset)
+                # to support this we need to emit .b moves in setup code...
+                info.overwrite_or_set_use(rsrc, None)
             elif ai_src_offset == 2:
                 info.overwrite_or_set_use(rsrc, saddr + ai_src_offset)
     elif smode in {'#@N', '#N'}:
@@ -667,6 +668,8 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                     if not sval == 0:
                         raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
                                          .format(repr(sval), name, actual_dmode, actual_rdst))
+                    else:
+                        info.overwrite_or_set_use(actual_rdst, 0)
             elif assem.modifies_destination(name):
                 if not is_fmt1_identity(name, sval):
                     raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
@@ -677,6 +680,13 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                                              validator_if_needed(True, 0),
                                              0) is False:
                         setup.append(('MOV', 'Rn', 'Rn', {'rsrc':3, 'rdst':2, 'bw':0}))
+                # and if we are doing a byte operation on SR, we'll clear the high bits...
+                if actual_rdst in {2} and bw == 1:
+                    dval = info.conflict(actual_rdst)
+                    if isinstance(dval, int):
+                        info.overwrite_or_set_use(actual_rdst, dval & 0xff)
+                    else:
+                        info.overwrite_or_set_use(actual_rdst, None)
                 
         # Otherwise add destination register to clobbers since we're writing to it.
         # I think this is all we need to do.
@@ -913,9 +923,9 @@ if __name__ == '__main__':
     bad = 0
     err = 0
 
-    for codes in iter_reps(n):
-        if codes[0][0] not in {'PUSH', 'CALL'}:
-            continue
+    for codes in iter_to_depth(n):
+        # if codes[0][0] not in {'PUSH', 'CALL'}:
+        #     continue
         print('-- {:s} --'.format(repr(codes)))
         try:
             code = emit_micro(0, codes)
