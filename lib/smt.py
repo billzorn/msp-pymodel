@@ -37,7 +37,7 @@ def create_block_ident(i, addr, block, difference):
 # out of the checker loop, or False to remove this core and continue searching for a model.
 #
 # returns True/False (SAT/broke out of checker loop), the final solver, remaining predicates
-def solve_x(blocks, fn_add_constraint, fn_get_preds, fn_process_core, verbosity=1):
+def solve_x(blocks, fn_add_constraint, fn_get_preds, fn_process_core, verbosity = 1):
     s = z3.Solver()
     
     i = 0
@@ -73,42 +73,45 @@ def solve_x(blocks, fn_add_constraint, fn_get_preds, fn_process_core, verbosity=
 
     return found_sat, s, predicates
 
+def describe_block(block):
+    ident, block, cycles = block
+    for fields in block:
+        ins = isa.decode(fields['words'][0])
+        fmt, name, smode, dmode = isa.instr_to_modes(ins)
+        if   fmt == 'fmt1':
+            rsrc = fields['rsrc']
+            rdst = fields['rdst']
+            if 'isrc' in fields:
+                sval = ', {:#x}'.format(fields['isrc'])
+            else:
+                sval = ''
+            print('{:s}\t{:s} (R{:d}{:s}), {:s} (R{:d})'
+                  .format(name, smode, rsrc, sval, dmode, rdst))
+        elif fmt == 'fmt2':
+            rsrc = fields['rsrc']
+            if 'isrc' in fields:
+                sval = ', {:#x}'.format(fields['isrc'])
+            else:
+                sval = ''
+            print('{:s}\t{:s} (R{:d}{:s})'
+                  .format(name, smode, rsrc, sval))
+        elif fmt == 'jump':
+            print('{:s}\t{:d}, taken={:s}'
+                  .format(name, fields['jump_offset'], str(fields['jump_taken'])))
+        else:
+            print('{:s}, {:s}, {:s}, {:s}'.format(fmt, name, smode, dmode))
+            utils.print_dict(fields)
+    print('{:s} total cycles'.format(str(cycles)))
+    print('')
+
 def describe_core_cx(core, pred_blocks):
     print('-----------------------------')
     print(core)
     print('')
     for pred in core:
-        ident, block, cycles = pred_blocks[pred]
-        for fields in block:
-            ins = isa.decode(fields['words'][0])
-            fmt, name, smode, dmode = isa.instr_to_modes(ins)
-            if   fmt == 'fmt1':
-                rsrc = fields['rsrc']
-                rdst = fields['rdst']
-                if 'isrc' in fields:
-                    sval = ', {:#x}'.format(fields['isrc'])
-                else:
-                    sval = ''
-                print('{:s}\t{:s} (R{:d}{:s}), {:s} (R{:d})'
-                      .format(name, smode, rsrc, sval, dmode, rdst))
-            elif fmt == 'fmt2':
-                rsrc = fields['rsrc']
-                if 'isrc' in fields:
-                    sval = ', {:#x}'.format(fields['isrc'])
-                else:
-                    sval = ''
-                print('{:s}\t{:s} (R{:d}{:s})'
-                      .format(name, smode, rsrc, sval))
-            elif fmt == 'jump':
-                print('{:s}\t{:d}, taken={:s}'
-                      .format(name, fields['jump_offset'], str(fields['jump_taken'])))
-            else:
-                print('{:s}, {:s}, {:s}, {:s}'.format(fmt, name, smode, dmode))
-                utils.print_dict(fields)
-        print('{:d} total cycles'.format(cycles))
-        print('')
+        describe_block(pred_blocks[pred])
 
-def do_round_cx(blocks, mk_add_constraint, z3_data, cx_max):
+def do_round_cx(blocks, mk_add_constraint, z3_data, cx_max, verbosity = 1):
     predicates = []
     pred_blocks = {}
     add_constraint = mk_add_constraint(predicates, pred_blocks, z3_data)
@@ -116,28 +119,32 @@ def do_round_cx(blocks, mk_add_constraint, z3_data, cx_max):
         return [x for x in predicates]
     cx_count = [0]
     def process_core(core):
-        describe_core_cx(core, pred_blocks)
+        if verbosity >= 1:
+            describe_core_cx(core, pred_blocks)
         cx_count[0] += 1
         if cx_count[0] >= cx_max:
             return True
         else:
             return False
 
-    print('Solving for first {:d} counterexamples...'.format(cx_max))
+    if verbosity >= 1:
+        print('Solving for first {:d} counterexamples...'.format(cx_max))
     success, s, s_preds = solve_x(blocks,
                                   add_constraint,
                                   get_preds,
-                                  process_core)
+                                  process_core,
+                                  verbosity = verbosity)
 
-    if success:
-        print('Done. Found a satisfying assignment after discarding {:d} counterexamples.'
-              .format(cx_count[0]))
-        for fn_object in z3_data[-1]:
-            print(s.model()[fn_object])
-    else:
-        print('Done. Did not find a satisfying assignment after discarding {:d} counterexamples.'
-              .format(cx_count[0]))
-    return success, s
+    if verbosity >= 1:
+        if success:
+            print('Done. Found a satisfying assignment after discarding {:d} counterexamples.'
+                  .format(cx_count[0]))
+            for fn_object in z3_data[-1]:
+                print(s.model()[fn_object])
+        else:
+            print('Done. Did not find a satisfying assignment after discarding {:d} counterexamples.'
+                  .format(cx_count[0]))
+    return success, s, s_preds
 
 def do_round_instr_subset(blocks, mk_add_constraint, z3_data, ipreds):
     add_constraint = mk_add_constraint(ipreds, blacklist_std, z3_data)
@@ -172,7 +179,7 @@ def do_round_instr_subset(blocks, mk_add_constraint, z3_data, ipreds):
     else:
         print('Did not find a satisfying assignment. {:d} control predicates remain.'
               .format(len(s_preds)))
-    return success, s
+    return success, s, s_preds
 
 # datatype definitions
 
@@ -291,7 +298,7 @@ def round_1(blocks):
     time_fn = z3.Function('time_r1', inst_dt, z3.IntSort())
 
     z3_data = (inst_dt, time_fn, [time_fn])
-    success, solver = do_round_cx(blocks, mk_add_constraint_individual, z3_data, cx_max)
+    success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual, z3_data, cx_max)
     if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr, z3_data, ipreds)
 
@@ -342,7 +349,7 @@ def round_2(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rdst])
-    success, solver = do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
+    success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
     if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
 
@@ -370,7 +377,7 @@ def round_3(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rdst, time_fn_rsrc])
-    success, solver = do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
+    success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
     if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
 
@@ -406,7 +413,7 @@ def round_4(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst])
-    success, solver = do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
+    success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
     if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
 
@@ -445,7 +452,7 @@ def round_5(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst])
-    success, solver = do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
+    success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual_r, z3_data, cx_max)
     if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_r, z3_data, ipreds)
 
@@ -521,7 +528,7 @@ def round_6(blocks):
             return time_fn_noreg(inst_dt.__dict__[iname])
 
     z3_data = (time_fn, [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst, time_fn_prev])
-    success, solver = do_round_cx(blocks, mk_add_constraint_individual_prev, z3_data, cx_max)
+    success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual_prev, z3_data, cx_max)
     if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_prev, z3_data, ipreds)
 
@@ -603,7 +610,7 @@ def round_7(blocks):
 
     z3_data = (time_fn, state_fn, state_fn_init, 
                [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst, state_fn_default, state_fn_init])
-    success, solver = do_round_cx(blocks, mk_add_constraint_individual_state, z3_data, cx_max)
+    success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual_state, z3_data, cx_max)
     if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_state, z3_data, ipreds)
     else:
@@ -870,6 +877,239 @@ def create_model_table_7(solver, z3_data, pname):
 
     with open(pname, 'wb') as f:
         pickle.dump({'state_default':state_default, 'ttab':ttab, 'stab':stab}, f)
+
+
+
+
+
+
+
+
+
+
+
+
+def round_8(blocks, verbosity = 1):
+    cx_max = 1000
+    
+    if verbosity >= 1:
+        print('SMT timing analysis round 8.')
+
+    ipreds = {ins : z3.Bool('p_' + smt_iname(ins)) for ins in isa.ids_ins}
+    inst_dt = create_instr_datatype()
+    reg_dt = create_reg_datatype()
+    state_dt = create_state_datatype('r8', 2)
+
+    time_fn_noreg = z3.Function('time_r8_noreg', state_dt, inst_dt, z3.IntSort())
+    time_fn_rsrc = z3.Function('time_r8_rsrc', state_dt, inst_dt, reg_dt, z3.IntSort())
+    time_fn_rdst = z3.Function('time_r8_rdst', state_dt, inst_dt, reg_dt, z3.IntSort())
+    time_fn_rsrc_rdst = z3.Function('time_r8_rsrc_rdst', state_dt, inst_dt, reg_dt, reg_dt, z3.IntSort())
+    state_fn_default = z3.Function('state_r8_default', state_dt, inst_dt, state_dt)
+    state_fn_init = z3.Function('state_r8_init', state_dt)
+
+    def time_fn(ins, fields, state):
+        iname = smt_iname(ins)
+        if ins.fmt in {'fmt1'} and (ins.smode in {'@Rn', '@Rn+'} or ins.dmode in {'Rn'}):
+            if   ins.smode in {'@Rn', '@Rn+'} and ins.dmode in {'Rn'}:
+                rsname = smt_rsrc(fields)
+                rdname = smt_rdst(fields)
+                return time_fn_rsrc_rdst(state, 
+                                         inst_dt.__dict__[iname], 
+                                         reg_dt.__dict__[rsname], 
+                                         reg_dt.__dict__[rdname])
+            elif ins.smode in {'@Rn', '@Rn+'}:
+                rname = smt_rsrc(fields)
+                return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+            else:
+                rname = smt_rdst(fields)
+                return time_fn_rdst(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        elif ins.name in {'PUSH', 'CALL'} and ins.smode in {'X(Rn)'}:
+            rname = smt_rsrc(fields)
+            return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        elif ins.name in {'PUSH'} and ins.smode in {'@Rn', '@Rn+'}:
+            rname = smt_rsrc(fields)
+            return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        else:
+            return time_fn_noreg(state, inst_dt.__dict__[iname])
+
+    def state_fn(ins, fields, state):
+        iname = smt_iname(ins)
+        return state_fn_default(state, inst_dt.__dict__[iname])
+
+    z3_data = (time_fn, state_fn, state_fn_init, 
+               [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst, state_fn_default, state_fn_init])
+    success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual_state, z3_data, cx_max, verbosity=verbosity)
+
+    return success, solver, s_preds
+    # if not success:
+    #     do_round_instr_subset(blocks, mk_add_constraint_instr_state, z3_data, ipreds)
+    #     return None
+    # else:
+    #     #print('NO MODEL CLEANING CODE')
+    #     #create_model_table_7(solver, z3_data, 'NEW_model.pickle')
+    #     return success, solver, s_preds
+
+
+
+
+
+
+
+
+
+def round_9(blocks):
+    cx_max = 20
+
+    print('SMT timing analysis round 9.')
+
+    ipreds = {ins : z3.Bool('p_' + smt_iname(ins)) for ins in isa.ids_ins}
+    inst_dt = create_instr_datatype()
+    reg_dt = create_reg_datatype()
+    state_dt = create_state_datatype('r9', 2)
+
+    time_fn_rsrc_rdst = z3.Function('time_r9_rsrc_rdst', state_dt, inst_dt, reg_dt, reg_dt, z3.IntSort())
+    state_fn_default = z3.Function('state_r9_default', state_dt, inst_dt, state_dt)
+    state_fn_init = z3.Function('state_r9_init', state_dt)
+
+    def time_fn(ins, fields, state):
+        iname = smt_iname(ins)
+        rsname = smt_rsrc(fields)
+        rdname = smt_rdst(fields)
+        return time_fn_rsrc_rdst(state, 
+                                 inst_dt.__dict__[iname], 
+                                 reg_dt.__dict__[rsname], 
+                                 reg_dt.__dict__[rdname])
+
+    def state_fn(ins, fields, state):
+        iname = smt_iname(ins)
+        return state_fn_default(state, inst_dt.__dict__[iname])
+
+    z3_data = (time_fn, state_fn, state_fn_init, 
+               [time_fn_rsrc_rdst, state_fn_default, state_fn_init])
+    success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual_state, z3_data, cx_max)
+    if not success:
+        do_round_instr_subset(blocks, mk_add_constraint_instr_state, z3_data, ipreds)
+    else:
+        print('NO MODEL CLEANING CODE')
+        #create_model_table_7(solver, z3_data, 'NEW_model.pickle')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def do_round_n(blocks, mk_add_constraint, z3_data, cx_max, exclude_idx, verbosity = 1):
+    predicates = []
+    pred_blocks = {}
+    add_constraint = mk_add_constraint(predicates, pred_blocks, z3_data)
+    def get_preds():
+        return [predicates[i] for i in range(len(predicates)) if i != exclude_idx]
+    cx_count = [0]
+    def process_core(core):
+        if verbosity >= 1:
+            describe_core_cx(core, pred_blocks)
+        cx_count[0] += 1
+        if cx_count[0] >= cx_max:
+            return True
+        else:
+            return False
+
+    if verbosity >= 1:
+        print('Solving for first {:d} counterexamples...'.format(cx_max))
+    success, s, s_preds = solve_x(blocks,
+                                  add_constraint,
+                                  get_preds,
+                                  process_core,
+                                  verbosity = verbosity)
+
+    if verbosity >= 1:
+        if success:
+            print('Done. Found a satisfying assignment after discarding {:d} counterexamples.'
+                  .format(cx_count[0]))
+            for fn_object in z3_data[-1]:
+                print(s.model()[fn_object])
+        else:
+            print('Done. Did not find a satisfying assignment after discarding {:d} counterexamples.'
+                  .format(cx_count[0]))
+    return success, s, s_preds
+
+def round_n(blocks, exclude_idx, verbosity = 1):
+    cx_max = 1
+    
+    if verbosity >= 1:
+        print('SMT timing analysis round n.')
+
+    ipreds = {ins : z3.Bool('p_' + smt_iname(ins)) for ins in isa.ids_ins}
+    inst_dt = create_instr_datatype()
+    reg_dt = create_reg_datatype()
+    state_dt = create_state_datatype('rn', 2)
+
+    time_fn_noreg = z3.Function('time_rn_noreg', state_dt, inst_dt, z3.IntSort())
+    time_fn_rsrc = z3.Function('time_rn_rsrc', state_dt, inst_dt, reg_dt, z3.IntSort())
+    time_fn_rdst = z3.Function('time_rn_rdst', state_dt, inst_dt, reg_dt, z3.IntSort())
+    time_fn_rsrc_rdst = z3.Function('time_rn_rsrc_rdst', state_dt, inst_dt, reg_dt, reg_dt, z3.IntSort())
+    state_fn_default = z3.Function('state_rn_default', state_dt, inst_dt, state_dt)
+    state_fn_init = z3.Function('state_rn_init', state_dt)
+
+    def time_fn(ins, fields, state):
+        iname = smt_iname(ins)
+        if ins.fmt in {'fmt1'} and (ins.smode in {'@Rn', '@Rn+'} or ins.dmode in {'Rn'}):
+            if   ins.smode in {'@Rn', '@Rn+'} and ins.dmode in {'Rn'}:
+                rsname = smt_rsrc(fields)
+                rdname = smt_rdst(fields)
+                return time_fn_rsrc_rdst(state, 
+                                         inst_dt.__dict__[iname], 
+                                         reg_dt.__dict__[rsname], 
+                                         reg_dt.__dict__[rdname])
+            elif ins.smode in {'@Rn', '@Rn+'}:
+                rname = smt_rsrc(fields)
+                return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+            else:
+                rname = smt_rdst(fields)
+                return time_fn_rdst(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        elif ins.name in {'PUSH', 'CALL'} and ins.smode in {'X(Rn)'}:
+            rname = smt_rsrc(fields)
+            return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        elif ins.name in {'PUSH'} and ins.smode in {'@Rn', '@Rn+'}:
+            rname = smt_rsrc(fields)
+            return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        else:
+            return time_fn_noreg(state, inst_dt.__dict__[iname])
+
+    def state_fn(ins, fields, state):
+        iname = smt_iname(ins)
+        return state_fn_default(state, inst_dt.__dict__[iname])
+
+    z3_data = (time_fn, state_fn, state_fn_init, 
+               [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst, state_fn_default, state_fn_init])
+    success, solver, s_preds = do_round_n(blocks, mk_add_constraint_individual_state, z3_data, cx_max, 
+                                          exclude_idx, verbosity=verbosity)
+
+    return success, solver, s_preds
+    # if not success:
+    #     do_round_instr_subset(blocks, mk_add_constraint_instr_state, z3_data, ipreds)
+    #     return None
+    # else:
+    #     #print('NO MODEL CLEANING CODE')
+    #     #create_model_table_7(solver, z3_data, 'NEW_model.pickle')
+    #     return success, solver, s_preds
+
+
+
 
 if __name__ == '__main__':
     import sys

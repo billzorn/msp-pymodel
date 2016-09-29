@@ -248,6 +248,28 @@ def iter_reps(n):
             for i in range(n):
                 yield [(name, 'none', 'none', -1, -1, bw)] * (i+2)
 
+# recover wishlist entry from instruction
+def micro_description(ins, fields):
+    if 'rsrc' in fields:
+        rsrc = fields['rsrc']
+    else:
+        rsrc = -1
+    if 'rdst' in fields:
+        rdst = fields['rdst']
+    else:
+        rdst = -1
+    if 'bw' in fields:
+        bw = fields['bw']
+    elif 'jump_taken' in fields:
+        taken = fields['jump_taken']
+        if taken:
+            bw = 0
+        else:
+            bw = 1
+    else:
+        bw = -1
+    return ins.name, ins.smode, ins.dmode, rsrc, rdst, bw
+
 # Now we need to actually generate micros
 
 def valid_readable_address(addr):
@@ -296,28 +318,29 @@ def prep_jump(info, name, taken):
     testname = 'test_{:s}_{:s}_{:s}'.format(name, 'taken' if taken else 'nottaken', unique_id())
 
     if taken:
-        if   name == 'JNZ':
-            info.add(uses={2:0x0})
+        if   name == 'JNZ':            
+            sr = 0x0
             setup = [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JZ':
-            info.add(uses={2:0x2})
+            sr = 0x2
             setup = [('MOV', '#N', 'Rn', {'isrc':0x2, 'rdst':2, 'bw':0})]
         elif name == 'JNC':
-            info.add(uses={2:0x0})
+            sr = 0x0
             setup = [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JC':
-            info.add(uses={2:0x1})
+            sr = 0x1
             setup = [('MOV', '#N', 'Rn', {'isrc':0x1, 'rdst':2, 'bw':0})]
         elif name == 'JN':
-            info.add(uses={2:0x4})
+            sr = 0x4
             setup = [('MOV', '#N', 'Rn', {'isrc':0x4, 'rdst':2, 'bw':0})]
         elif name == 'JGE':
-            info.add(uses={2:0x0})
+            sr = 0x0
             setup = [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JL':
-            info.add(uses={2:0x100})
+            sr = 0x100
             setup = [('MOV', '#N', 'Rn', {'isrc':0x100, 'rdst':2, 'bw':0})]
         elif name == 'JMP':
+            sr = None
             setup = []
         else:
             raise ValueError('Not a jump instruction: {:s}'.format(repr(name)))
@@ -334,25 +357,25 @@ def prep_jump(info, name, taken):
             ('MOV', '#N', 'Rn', {'isrc':('LABEL','HALT_FAIL'), 'rdst':0, 'bw':0}), # goto fail
         ]
         if   name == 'JNZ':
-            info.add(uses={2:0x2})
+            sr = 0x2
             setup += [('MOV', '#N', 'Rn', {'isrc':0x2, 'rdst':2, 'bw':0})]
         elif name == 'JZ':
-            info.add(uses={2:0x0})
+            sr = 0x0
             setup += [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JNC':
-            info.add(uses={2:0x1})
+            sr = 0x1
             setup += [('MOV', '#N', 'Rn', {'isrc':0x1, 'rdst':2, 'bw':0})]
         elif name == 'JC':
-            info.add(uses={2:0x0})
+            sr = 0x0
             setup += [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JN':
-            info.add(uses={2:0x0})
+            sr = 0x0
             setup += [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JGE':
-            info.add(uses={2:0x100})
+            sr = 0x100
             setup += [('MOV', '#N', 'Rn', {'isrc':0x100, 'rdst':2, 'bw':0})]
         elif name == 'JL':
-            info.add(uses={2:0x0})
+            sr = 0x0
             setup += [('MOV', '#N', 'Rn', {'isrc':0x0, 'rdst':2, 'bw':0})]
         elif name == 'JMP':
             raise ValueError('condition: cannot have a non-taken unconditional JMP')
@@ -361,7 +384,9 @@ def prep_jump(info, name, taken):
         
         bench = [(name, 'none', 'none', {'s':     ('JSIGN',  testname + '_FAIL'),
                                          'offset':('JLABEL', testname + '_FAIL')})]
-
+    
+    if sr is not None:
+        info.check_or_set_use(2, validator_if_needed(True, sr), sr)
     return setup, bench
 
 # Generate necessary setup conditions and state dependencies
@@ -412,8 +437,15 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
 
     # First, handle some special cases for fmt2
     if name in {'PUSH', 'CALL'}:
-        if info.check_or_set_use(1, valid_writable_address, daddr) is False:
-            setup += [('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':1, 'bw':0})]
+        known_daddr = info.check_or_set_use(1, valid_writable_address, daddr)
+        # look at what's in the stack pointer; we'll use it for writing some stuff
+        if known_daddr is False:
+            setup.append(('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':1, 'bw':0}))
+        else:
+            daddr = known_daddr
+        # of course we'll actually write at daddr-2, but we record daddr here to
+        # represent the value in the register. we'll check if daddr-2 is still a
+        # valid address later.
     if name in {'CALL'}:
         assert not require_source_data
         sval = ('LABEL', testname + '_POST')
@@ -432,8 +464,11 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             # we can just use daddr-4 because we know that nothing will be put in between
             # our setup instructions, and the net effect is to put daddr-4 in the SP.
             # quick check to make sure the addresses are legal though.
-            assert valid_writable_address(daddr) and valid_writable_address(daddr-4)
-            info.add(uses={1:daddr-4})
+            assert (valid_writable_address(daddr-2) and
+                    valid_writable_address(daddr-4))
+            info.add(uses={1:daddr-4,
+                           daddr-2:('LABEL', testname + '_POST'),
+                           daddr-4:0})
             setup += [
                 ('MOV', '#N', 'Rn', {'isrc':daddr, 'rdst':1, 'bw':0}),
                 ('PUSH', '#N', 'none', {'isrc':('LABEL', testname + '_POST'), 'bw':0}),
@@ -534,6 +569,9 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                 assert rsrc != 3, 'really?'
     elif smode in {'X(Rn)'}:
         assert rsrc not in {0, 2, 3}, 'invalid source mode: {:s} {:d}'.format(smode, rsrc)
+        if name in {'PUSH', 'CALL'} and rsrc in {1}:
+            raise ValueError('condition: {:s} X(SP) unsupported'
+                             .format(name))
         # for now, move into the register, and use 0 offset...
         known_saddr = info.check_or_set_use(rsrc, valid_readable_address, saddr)
         simm = 0
@@ -560,6 +598,9 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
     elif smode in {'@Rn', '@Rn+'}:
         assert rsrc not in {0}, 'invalid source mode: {:s} {:d}'.format(smode, rsrc)
+        if name in {'PUSH', 'CALL'} and rsrc in {1}:
+            raise ValueError('condition: {:s} @SP{:s} unsupported'
+                             .format(name, '+' if smode in {'@Rn+'} else ''))
         cg_value = assem.has_cg(smode, rsrc)
         if cg_value is not None:
             if not validator_if_needed(require_source_data, sval)(cg_value):
@@ -579,7 +620,7 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                 setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
             # we need to do something here if we're autoincrementing
             if   ai_src_offset == 1:
-                info.overwrite_or_set_use(rsrc, None)
+                info.overwrite_or_set_use(rsrc, saddr + ai_src_offset)
             elif ai_src_offset == 2:
                 info.overwrite_or_set_use(rsrc, saddr + ai_src_offset)
     elif smode in {'#@N', '#N'}:
@@ -659,11 +700,9 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         info.overwrite_or_set_use(2, None)
         info.add(clobbers=[2])
 
-    # hack, instructions that modify the SP force the value to unknown afterwards
-    if name in {'PUSH', 'CALL', 'RETI'}:
+    # hack, instructions that modify the SP update the value afterwards
+    if name in {'PUSH', 'CALL'}:
         offset = -2
-        if name in {'RETI'}:
-            offset = 4
         
         # check if the offest we picked looks writable
         spval = info.conflict(1)
@@ -671,11 +710,13 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             raise ValueError('conflict: SP appears to hold invalid stack address: {:s} + {:s}'
                              .format(repr(spval), repr(offset)))
         
-        # then destroy the value in the register, so we don't try to use it again
+        # record the new value for the SP
+        info.overwrite_or_set_use(1, spval + offset)
+        # and destroy the data where we're writing
+        info.overwrite_or_set_use(spval + offset, None)
+    # or destroy it in the case of RETI. we can write manual benchmarks to handle multiple in a row
+    if name in {'RETI'}:
         info.overwrite_or_set_use(1, None)
-        if name in {'PUSH', 'CALL'}:
-            # and the data there that's being written by the push
-            info.overwrite_or_set_use(spval + offset, None)
 
     # prepare fields
     fields = {'bw':bw}
@@ -751,7 +792,8 @@ def emit_micro(addr, codes, measure=True):
 def iter_states(codes_iterator, measure = True, verbosity = 0, metrics = None):
     start_addr = model.fram_start
     end_addr = model.ivec_start - 256
-    size = end_addr - start_addr
+    haltpad = 8
+    size = end_addr - start_addr - (haltpad*2)
 
     header_region = emit_init(start_timer = measure)
     header_size = assem.region_size(header_region)
@@ -804,8 +846,9 @@ def iter_states(codes_iterator, measure = True, verbosity = 0, metrics = None):
             for i in range(len(words)):
                 write16(start_pc + (i*2), words[i])
             # halt
-            for i in range(8):
+            for i in range(haltpad-1):
                 write16(start_pc + header_size + current_size + (i*2), 0x3fff)
+            write16(start_pc + header_size + current_size + ((haltpad-1)*2), 0x3ff8)
             # ram
             for i in range(256):
                 write16(model.ram_start + (i*2), 0x3fff)
@@ -845,8 +888,9 @@ def iter_states(codes_iterator, measure = True, verbosity = 0, metrics = None):
         for i in range(len(words)):
             write16(start_pc + (i*2), words[i])
         # halt
-        for i in range(8):
+        for i in range(haltpad-1):
             write16(start_pc + header_size + current_size + (i*2), 0x3fff)
+        write16(start_pc + header_size + current_size + ((haltpad-1)*2), 0x3ff8)
         # ram
         for i in range(256):
             write16(model.ram_start + (i*2), 0x3fff)
@@ -869,7 +913,9 @@ if __name__ == '__main__':
     bad = 0
     err = 0
 
-    for codes in iter_to_depth(n):
+    for codes in iter_reps(n):
+        if codes[0][0] not in {'PUSH', 'CALL'}:
+            continue
         print('-- {:s} --'.format(repr(codes)))
         try:
             code = emit_micro(0, codes)
@@ -878,10 +924,11 @@ if __name__ == '__main__':
             # words = assem.assemble_symregion(code, 0x4400, {'HALT_FAIL':0x4000})
             # utils.printhex(words)
         except ValueError as e:
-            traceback.print_exc()
             if str(e).startswith('condition'):
+                print('unsupported')
                 bad += 1
             elif str(e).startswith('conflict'):
+                traceback.print_exc()
                 bad += 1
             else:
                 err += 1

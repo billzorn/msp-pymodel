@@ -76,6 +76,12 @@ _start:
 	MOV.W	R15, &.data3
 
 	
-	;;  halt
+.halt:
 	.word	0x3fff	; halt
 	.word	0x3fff	; halt
+	.word	0x3fff	; halt
+	.word	0x3fff	; halt
+	.word	0x3fff	; halt
+	.word	0x3fff	; halt
+	.word	0x3fff	; halt
+	JMP	.halt

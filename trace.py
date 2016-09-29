@@ -10,6 +10,7 @@ import json
 import codecs
 import traceback
 import multiprocessing
+import pickle
 
 libdir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib')
 sys.path.append(libdir)
@@ -61,14 +62,22 @@ def check_elf(elfname, verbosity = 0):
                     print('Invalid run write to reserved fram region:')
                     print(utils.triple_summarize(fram_end, model.upper_start - 256))
                     return False
+            touchdown = mulator.md(mulator.regs()[0], 16)
+            expected_touchdown = [0xff, 0x3f, 0xff, 0x3f, 0xff, 0x3f, 0xff, 0x3f, 0xff, 0x3f, 0xff, 0x3f, 0xff, 0x3f, 0xf8, 0x3f]
+            if touchdown != expected_touchdown:
+                print('Missed touchdown pad:')
+                print('  expecting', expected_touchdown)
+                print('  got', touchdown)
+                return False
             if verbosity >= 0:
                 print('  checked {:s}, pass'.format(elfname))
             return True
 
+    print('Did not complete?')
     return False
 
-def trace_elf(elfname, jname, verbosity = 0):
-    with MSPdebug(verbosity=verbosity) as driver:
+def trace_elf(elfname, jname, tty = None, verbosity = 0):
+    with MSPdebug(tty=tty, verbosity=verbosity) as driver:
         mulator = Emulator(verbosity=verbosity, tracing=True)
         mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
         cosim = Cosim([driver, mulator], [True, False], mmap)
@@ -87,6 +96,76 @@ def trace_elf(elfname, jname, verbosity = 0):
 
     if verbosity >= 0:
         print('  traced {:s} to {:s}'.format(elfname, jname))
+
+def retrace_elf(elfname, jname, tinfo, interesting_blocks, verbosity = 0):
+    if not os.path.isfile(jname):
+        print('skipping {:s}, no trace {:s}'.format(elfname, jname))
+        return False
+
+    timulator = Emulator(verbosity=verbosity, tracing=True, tinfo=tinfo)
+    mulator = Emulator(verbosity=verbosity, tracing=True)
+    mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
+    cosim = Cosim([timulator, mulator], [False, False], mmap)
+    master_idx = 0
+
+    cosim_repl.prog_and_sync(cosim, master_idx, elfname)
+    cosim.run(max_steps=run_max_steps, interval=run_interval, passes=run_passes)
+
+    tmp_jstr = json.dumps({'diff':cosim.diff(), 'trace':mulator.trace, 'iotrace':mulator.iotrace2})
+    tmp_jobj = json.loads(tmp_jstr)
+
+    diff = tmp_jobj['diff']
+    trace = tmp_jobj['trace']
+    iotrace = tmp_jobj['iotrace']
+    old_diff, old_trace, old_iotrace = load_trace(jname)
+
+    same = diff == old_diff
+    if verbosity >= 0:
+        print('  timed emulated {:s} against {:s}. Same? {:s}'
+              .format(elfname, jname, repr(same)))
+        # print('---ORIGINAL---')
+        # utils.explain_diff(old_diff)
+        # print('---EMULATOR---')
+        # utils.explain_diff(diff)
+
+    if not same:
+        old_blocks = []
+        old_mismatches = compute_mismatches(old_diff, verbosity=verbosity)
+        old_err = mismatches_to_blocks(old_trace, old_mismatches, old_blocks)
+        blocks = []
+        mismatches = compute_mismatches(diff, verbosity=verbosity)
+        err = mismatches_to_blocks(trace, mismatches, blocks)
+
+        if old_err and err:
+            print('    failures in both traces: {:s}'.format(elfname))
+        elif old_err:
+            print('    BAD: failures in hardware trace: {:s}'.format(elfname))
+        elif old_err:
+            print('    BAD: failures in emulator trace: {:s}'.format(elfname))
+        else:
+            print('    successful trace: {:s}'.format(elfname))
+
+        old_blocks_index = {addr: (x, y) for (addr, x, y) in old_blocks}
+        trace_errors = 0
+        uncovered = 0
+        for (addr, block, difference) in blocks:
+            if addr in old_blocks_index:
+                old_block, old_difference = old_blocks_index.pop(addr)
+                if block != old_block:
+                    print('      BAD: trace difference at {:05x}'.format(addr))
+                    trace_errors += 1
+                elif difference != old_difference:
+                    interesting_blocks.append((addr, old_block, old_difference))
+            else:
+                uncovered += 1
+
+        if trace_errors > 0:
+            print('    BAD: {:d} trace differences'.format(trace_errors))
+        if uncovered > 0 or len(old_blocks_index) > 0:
+            print('    BAD: {:d} blocks unique to hardware, {:d} to emulator'
+                  .format(len(old_blocks_index), uncovered))
+
+    return same
 
 def load_trace(jname):
     with utils.Read7z(jname) as f:
@@ -239,8 +318,10 @@ def walk_par(fn, targetdir, cargs, n_procs = 1, verbosity = 0):
         return pool.map(fn, worklists)
 
 def process_micros(args):
-    (k, files, (check, execute, suffix, abort_on_error, verbosity)) = args
+    (k, files, (check, execute, tinfo, suffix, abort_on_error, tty, verbosity)) = args
     i = 0
+    retrace_differences = []
+    blocks = []
 
     for root, fname in files:
         if fname.endswith(suffix):
@@ -258,28 +339,53 @@ def process_micros(args):
             if execute:
                 assert k == 0, 'microbenchmark execution only supports one process'
                 try:
-                    trace_elf(elfpath, jpath, verbosity=verbosity)
+                    trace_elf(elfpath, jpath, tty=tty, verbosity=verbosity)
                 except Exception:
                     traceback.print_exc()
                     if abort_on_error:
                         break
+            if tinfo:
+                same = retrace_elf(elfpath, jpath, tinfo, blocks, verbosity=verbosity)
+                if not same:
+                    retrace_differences.append(elfpath)
 
     if verbosity >= 0:
         print('processed {:d} microbenchmarks, done'.format(i))
-    return i
+    return i, retrace_differences, blocks
 
-def walk_micros(testdir, check, execute, suffix = '.elf', abort_on_error = True,
-                verbosity = 0, n_procs = 1):
+def walk_micros(testdir, check, execute, tinfo, suffix = '.elf', abort_on_error = True,
+                tty = None, verbosity = 0, n_procs = 1):
     if execute and n_procs != 1:
         print('Warning: microbenchmark execution only supports one process, using n_procs=1')
         n_procs = 1
 
-    counts = walk_par(process_micros, testdir, (check, execute, suffix, abort_on_error, verbosity),
-                      n_procs=n_procs, verbosity=verbosity)
+    retrace_data = walk_par(process_micros, testdir, 
+                                   (check, execute, tinfo, suffix, abort_on_error, tty, verbosity),
+                                   n_procs=n_procs, verbosity=verbosity)
+
+    count = 0
+    count_differences = 0
+    printed_header = False
+    interesting_blocks = []
+    for i, differences, blocks in retrace_data:
+        count += i
+        interesting_blocks += blocks
+        for elfpath in differences:
+            if not printed_header:
+                print('Emulated timing model disagreed for traces:')
+                printed_header = True
+            print('  {:s}'.format(elfpath))
+            count_differences += 1
 
     if n_procs > 1 and verbosity >= 0:
-        print('dispatched to {:d} cores, processed {:d} total microbenchmarks'
-              .format(n_procs, sum(counts)))
+        print('dispatched to {:d} cores, processed {:d} total microbenchmarks, {:d} timing differences'
+              .format(n_procs, count, count_differences))
+
+    if len(interesting_blocks) > 0 and verbosity >= 0:
+        print('recovered {:d} interesting blocks that differ in hardware and emulation'
+              .format(len(interesting_blocks)))
+
+    return interesting_blocks
 
 def process_traces(args):
     (k, files, (prefix, verbosity)) = args
@@ -336,19 +442,31 @@ def main(args):
     n_procs = args.ncores
     abort_on_error = not args.noabort
     trprefix = args.trprefix
+    tinfo_name = args.timing
+    tty = args.tty
     verbosity = args.verbose
 
     did_work = False
 
-    if check or execute:
+    if tinfo_name:
+        with open(tinfo_name, 'rb') as f:
+            tinfo = pickle.load(f)
+    else:
+        tinfo = None
+        
+    if check or execute or tinfo:
         did_work = True
-        walk_micros(testdir, check, execute, suffix=suffix, abort_on_error=abort_on_error,
-                    n_procs=n_procs, verbosity=verbosity)
+        interesting_blocks = walk_micros(testdir, check, execute, tinfo, 
+                                         suffix=suffix, abort_on_error=abort_on_error,
+                                         n_procs=n_procs, tty=tty, verbosity=verbosity)
+    else:
+        interesting_blocks = None
 
     if jout or arffname or smtround > 0:
         did_work = True
-        if jin_list:
-                
+        if interesting_blocks is not None:
+              blocks = interesting_blocks
+        elif jin_list:
             blocks = []
             for jname in jin_list:
                 new_blocks = extract_json(jname)
@@ -359,6 +477,10 @@ def main(args):
         else:
             blocks = walk_traces(testdir, prefix=trprefix, verbosity=verbosity, n_procs=n_procs)
             
+        if len(blocks) <= 0:
+              print('no blocks found, nothing else to do')
+              return
+
         if jout:
             create_json(blocks, jout)
             if verbosity >= 0:
@@ -384,9 +506,14 @@ def main(args):
                 smt.round_6(blocks)
             elif smtround == 7:
                 smt.round_7(blocks)
+            elif smtround == 8:
+                smt.round_8(blocks)
+            elif smtround == 9:
+                smt.round_9(blocks)
 
     if not did_work:
         print('Nothing to do.')
+        return
 
 
 if __name__ == '__main__':
@@ -409,6 +536,8 @@ if __name__ == '__main__':
                         help='accumulate data into arff file')
     parser.add_argument('-s', '--smt', type=int, default=0,
                         help='run analysis round with smt solver')
+    parser.add_argument('-t', '--timing',
+                        help='use this pickled timing model to emulate Timer_A')
     parser.add_argument('-v', '--verbose', type=int, default=0,
                         help='verbosity level')
     parser.add_argument('-noabort', action='store_true',
@@ -417,6 +546,9 @@ if __name__ == '__main__':
                         help='run in parallel on this many cores')
     parser.add_argument('-trprefix', default='',
                         help='only read traces with this prefix')
+    parser.add_argument('-tty', default=None,
+                        help='connect to mspdebug on this TTY')
+
 
     args = parser.parse_args()
 
