@@ -64,7 +64,7 @@ class CallSite(object):
             # s += '-- entry block --\n{:s}'.format(str(self.bblock))
             s += '-- entry block --\n'
         else:
-            s ++ '-- no entry block recorded --\n'
+            s += '-- no entry block recorded --\n'
         return s
 
 
@@ -84,7 +84,7 @@ class CFG(object):
 
     def _describe(self, call_table, block_table, entrypoint):
         print('CFG starting from {:05x}, {:d} sites, {:d} basic blocks\n'
-              .format(entrypoint, len(call_table), entrypoint))
+              .format(entrypoint, len(call_table), len(block_table)))
         ct_clone = call_table.copy()
         bt_clone = block_table.copy()
         self._describe_call(ct_clone, bt_clone, entrypoint)
@@ -132,7 +132,7 @@ class CFG(object):
                   .format(pc, callsite, pc_pred))
         print('')
 
-    def build_graph(self):
+    def build_graph(self, do_quadratic_checks = False):
         # find entry point
         entrypoint = self.read16(model.resetvec)
         entrysite = CallSite(entrypoint, self.verbosity)
@@ -155,6 +155,10 @@ class CFG(object):
             # pc and callsite already matched, update preds only
             else:
                 block_table[pc].preds.add(pc_pred)
+        # could maintain a separate index if this is needed as a feature
+        if do_quadratic_checks:
+            def pc_in_workset(pc_check):
+                return any(pc == pc_check for pc, callsite, pc_pred in workset)
 
         while workset:
             pc, callsite, pc_pred = workset.pop()
@@ -175,9 +179,13 @@ class CFG(object):
 
                 current_block.callsites.add(callsite)
                 current_block.preds.add(pc_pred)
-                # put all of the blocks successors back onto the worklist with the new callsite
-                for pc_target in current_block.succs:
+                # put all of the block's non-call successors back onto the worklist with the new callsite
+                pc_target = current_block.call_return_target
+                if pc_target is not None:
                     update_workset(pc_target, callsite, current_block.addr)
+                else:
+                    for pc_target in current_block.succs:
+                        update_workset(pc_target, callsite, current_block.addr)
                 continue
                 # and done with this block
             
@@ -217,59 +225,72 @@ class CFG(object):
                     if split_addr is None:
                         split_addr = prev_addr
                         if prev_addr == current_block.addr:
-                            if self.verbosity >= 2:
-                                print('post split: revisiting {:05x} under {:05x} for second time'
+                            if self.verbosity >= -2:
+                                print('post split: revisiting {:05x} in block {:05x} again'
                                       .format(pc, prev_addr))
-                            # # we need to relink our predecessors to us
-                            # for old_pred in current_block.preds:
-                            #     block_table[old_pred].succs.add(current_block.addr)
                         else:
-                            if self.verbosity >= 2:
-                                print('split: revisiting {:05x} under {:05x}, first visit from {:05x}'
+                            if self.verbosity >= -2:
+                                print('split: revisiting {:05x} in block {:05x}, first visit from block {:05x}'
                                       .format(pc, current_block.addr, ins_table[pc]))
 
                             # to split we just remove the existing block and put it back on the worklist.
                             # the fallthrough logic will connect back to the new block automatically.
-                            prev_block = block_table.pop(prev_addr)
-                            # remove from children of callsites
-                            for old_callsite in prev_block.callsites:
-                                old_callsite_object = call_table[old_callsite]
-                                if old_callsite_object.bblock is prev_block:
-                                    old_callsite_object.bblock = None
-                                old_callsite_object.children.remove(prev_addr)
-                            # (don't) remove from predecessors
-                            for old_pred in prev_block.preds:
-                                # old_pred_block = block_table[old_pred]
-                                # old_pred_block.succs.remove(prev_addr)
-                                # # also remove return targets
-                                # if old_pred_block.call_return_target == prev_addr:
-                                #     for old_pred_callsite in old_pred_block.callsites:
-                                #         old_pred_callsite_object = call_table[old_pred_callsite]
-                                #         if prev_addr in old_pred_callsite_object.return_targets:
-                                #             old_pred_callsite_object.return_targets.remove(prev_addr)
-                                #             print(' killed RT {:05x} to {:05x}'.format(old_pred_callsite, prev_addr))
-                                #         else:
-                                #             print(' missing RT {:05x} to {:05x}'.format(old_pred_callsite, prev_addr))
-                                #     old_pred_block.call_return_target = None
-                                # # CHECK
-                                # for cs in call_table:
-                                #     cs_obj = call_table[cs]
-                                #     if prev_addr in cs_obj.return_targets:
-                                #         print('missed return target {:05x} to {:05x}'.format(cs, prev_addr))
-                                #         self._describe_workset(workset)
-                                #         self._describe(call_table, block_table, entrypoint)
-                                #         assert False
-
-                                # put back on worklist for each pred, for each of that pred's callsites
+                            if prev_addr in block_table:                                
+                                prev_block = block_table.pop(prev_addr)
+                                # remove from children of callsites --
+                                # the update logic should re-add everything, not clear if this is necessary
                                 for old_callsite in prev_block.callsites:
-                                    update_workset(prev_addr, old_callsite, old_pred)
+                                    old_callsite_object = call_table[old_callsite]
+                                    if old_callsite_object.bblock is prev_block:
+                                        old_callsite_object.bblock = None
+                                    if prev_addr in old_callsite_object.children:
+                                        old_callsite_object.children.remove(prev_addr)
+                                    else:
+                                        print('WARNING: old site {:05x} missing child {:05x}'
+                                              .format(old_callsite, prev_addr))
+                                # don't remove from predecessors,
+                                for old_pred in prev_block.preds:
+                                    # just put back on worklist for each pred, for each of that pred's callsites
+                                    for old_callsite in prev_block.callsites:
+                                        update_workset(prev_addr, old_callsite, old_pred)
+                            else:
+                                # if we couldn't find the block, we must have already removed it and it's
+                                # somewhere in the worklist
+                                if do_quadratic_checks:
+                                    assert pc_in_workset(prev_addr), ('previously removed {:05x} missing from workset'
+                                                                      .format(prev_addr))
+                                    check_str = ' (found {:05x} in workset)'.format(prev_addr)
+                                else:
+                                    check_str = ''
+                                if self.verbosity >= -2:
+                                    print('already removed {:05x} for a previous split'.format(prev_addr, check_str))
                     else:
-                        assert split_addr == prev_addr, 'was splitting {:05x}, saw {:05x}'.format(split_addr, prev_addr)
+                        if split_addr != prev_addr:
+                            if do_quadratic_checks:
+                                assert pc_in_workset(prev_addr), ('was splitting {:05x}, saw {:05x} not in workset'
+                                                                  .format(split_addr, prev_addr))
+                                check_str = ' (found {:05x} in workset)'.format(prev_addr)
+                            else:
+                                check_str = ''
+                            if self.verbosity >= -2:
+                                print('splits overlap: was splitting {:05x}, saw {:05x}{:s}'
+                                      .format(split_addr, prev_addr, check_str))
+                            # update split_addr to track multiple overlaps instead of just creating spam
+                            split_addr = prev_addr
+
+                            # #self._describe(call_table, block_table, entrypoint)
+                            # self._describe_workset(workset)
+                            # for i in range(pc, pc + 32):
+                            #     if i in ins_table:
+                            #         print(' {:05x} : {:05x}'.format(i, ins_table[i]))
+                            #     else:
+                            #         print(' {:05x} : None'.format(i))
+                            # assert False
                 ins_table[pc] = current_block.addr
 
                 for b in range(pc, pc_next):
                     if b in byte_table:
-                        assert split_addr == prev_addr, 'was splitting {:05x}, saw {:05x}'.format(split_addr, prev_addr)
+                        assert split_addr == prev_addr, 'byte splitting {:05x}, saw {:05x}'.format(split_addr, prev_addr)
                     byte_table[b] = current_block.addr
                 
                 current_block.instrs.append(ins)
@@ -311,7 +332,8 @@ class CFG(object):
                         update_workset(pc_next, callsite, current_block.addr)
                         
                     else:
-                        print('indirect call at {:05x}, unsupported'.format(pc))
+                        if self.verbosity >= 0:
+                            print('indirect call at {:05x}, unsupported'.format(pc))
                     in_block = False
                 
                 # check for indirect branch
@@ -329,7 +351,8 @@ class CFG(object):
                         update_workset(pc_target, callsite, current_block.addr)
 
                     else:
-                        print('indirect branch at {:05x}, unsupported'.format(pc))
+                        if self.verbosity >= 0:
+                            print('indirect branch at {:05x}, unsupported'.format(pc))
                     in_block = False
 
                 # look at next instruction in block
@@ -338,13 +361,15 @@ class CFG(object):
 
                     # check to make sure we aren't merging with an existing block
                     if pc in block_table:
-                        print('fallthrough edge from block {:05x} to {:05x}'.format(current_block.addr, pc))
+                        if self.verbosity >= 2:
+                            print('fallthrough edge from block {:05x} to {:05x}'.format(current_block.addr, pc))
                         current_block.succs.add(pc)
                         update_workset(pc, callsite, current_block.addr)
                         in_block = False
 
-            print('created:')
-            print(str(current_block))
+            if self.verbosity >= 4:
+                print('created:')
+                print(str(current_block))
 
         if self.verbosity >= 1:
             print('processed workset, {:d} callsites, {:d} blocks'.format(len(call_table), len(block_table)))
@@ -370,6 +395,6 @@ class CFG(object):
 if __name__ == '__main__':
     import sys
     fname = sys.argv[1]
-    cfg = CFG(fname, verbosity=5)
+    cfg = CFG(fname, verbosity=1)
     
-    cfg.build_graph()
+    cfg.build_graph(do_quadratic_checks=True)
