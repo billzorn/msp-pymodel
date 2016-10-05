@@ -225,11 +225,11 @@ class CFG(object):
                     if split_addr is None:
                         split_addr = prev_addr
                         if prev_addr == current_block.addr:
-                            if self.verbosity >= -2:
+                            if self.verbosity >= 2:
                                 print('post split: revisiting {:05x} in block {:05x} again'
                                       .format(pc, prev_addr))
                         else:
-                            if self.verbosity >= -2:
+                            if self.verbosity >= 2:
                                 print('split: revisiting {:05x} in block {:05x}, first visit from block {:05x}'
                                       .format(pc, current_block.addr, ins_table[pc]))
 
@@ -262,7 +262,7 @@ class CFG(object):
                                     check_str = ' (found {:05x} in workset)'.format(prev_addr)
                                 else:
                                     check_str = ''
-                                if self.verbosity >= -2:
+                                if self.verbosity >= 2:
                                     print('already removed {:05x} for a previous split'.format(prev_addr, check_str))
                     else:
                         if split_addr != prev_addr:
@@ -272,7 +272,7 @@ class CFG(object):
                                 check_str = ' (found {:05x} in workset)'.format(prev_addr)
                             else:
                                 check_str = ''
-                            if self.verbosity >= -2:
+                            if self.verbosity >= 2:
                                 print('splits overlap: was splitting {:05x}, saw {:05x}{:s}'
                                       .format(split_addr, prev_addr, check_str))
                             # update split_addr to track multiple overlaps instead of just creating spam
