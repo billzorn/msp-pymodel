@@ -38,7 +38,7 @@ def is_reg_sub(fields, rsrc, rdst):
 
 run_max_steps = 10000
 run_interval = 1
-run_passes = 3
+run_passes = 5
 
 def check_elf(elfname, verbosity = 0):
     mulator = Emulator(verbosity=verbosity, tracing=True)
@@ -76,19 +76,34 @@ def check_elf(elfname, verbosity = 0):
     print('Did not complete?')
     return False
 
-def trace_elf(elfname, jname, tty = None, verbosity = 0):
-    with MSPdebug(tty=tty, verbosity=verbosity) as driver:
-        mulator = Emulator(verbosity=verbosity, tracing=True)
-        mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
-        cosim = Cosim([driver, mulator], [True, False], mmap)
-        master_idx = 0
+def trace_elf(elfname, jname, tty = None, logname = None, verbosity = 0):
+    if logname is None:
+        with MSPdebug(tty=tty, logf=sys.stdout, verbosity=verbosity) as driver:
+            mulator = Emulator(verbosity=verbosity, tracing=True)
+            mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
+            cosim = Cosim([driver, mulator], [True, False], mmap)
+            master_idx = 0
 
-        cosim_repl.prog_and_sync(cosim, master_idx, elfname)
-        cosim.run(max_steps=run_max_steps, interval=run_interval, passes=run_passes)
+            cosim_repl.prog_and_sync(cosim, master_idx, elfname)
+            cosim.run(max_steps=run_max_steps, interval=run_interval, passes=run_passes)
 
-        diff = cosim.diff()
-        trace = mulator.trace
-        iotrace = mulator.iotrace2
+            diff = cosim.diff()
+            trace = mulator.trace
+            iotrace = mulator.iotrace2
+    else:
+        with open(logname, 'at') as f:
+            with MSPdebug(tty=tty, logf=f, verbosity=max(verbosity,1)) as driver:
+                mulator = Emulator(verbosity=verbosity, tracing=True)
+                mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
+                cosim = Cosim([driver, mulator], [True, False], mmap)
+                master_idx = 0
+
+                cosim_repl.prog_and_sync(cosim, master_idx, elfname)
+                cosim.run(max_steps=run_max_steps, interval=run_interval, passes=run_passes)
+
+                diff = cosim.diff()
+                trace = mulator.trace
+                iotrace = mulator.iotrace2
 
     with utils.Write7z(jname) as f:
         writer = codecs.getwriter('utf-8')
@@ -323,6 +338,12 @@ def process_micros(args):
     retrace_differences = []
     blocks = []
 
+    if verbosity >= 1:
+        pid = os.getpid()
+        logname = 'pytrace.{:d}.log.txt'.format(pid)
+    else:
+        logname = None
+
     for root, fname in files:
         if fname.endswith(suffix):
             i += 1
@@ -344,7 +365,7 @@ def process_micros(args):
                     assert 0 <= k and k < len(ttys), 'must specify at least one TTY per process'
                     tty = ttys[k]
                 try:
-                    trace_elf(elfpath, jpath, tty=tty, verbosity=verbosity)
+                    trace_elf(elfpath, jpath, tty=tty, logname=logname, verbosity=verbosity)
                 except Exception:
                     traceback.print_exc()
                     if abort_on_error:

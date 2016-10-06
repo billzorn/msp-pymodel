@@ -37,14 +37,13 @@ def enqueue_output(out, queue, active):
 # also note that retries only matters if there's a target, otherwise we only
 # go around once anyway
 def nonblocking_read(queue, target = None, timeout = default_timeout, retries = default_retries,
-                     verbosity = 0):
+                     logf = sys.stdout, verbosity = 0):
     output = ''
     first = True
     tries = 0
     if verbosity >= 3:
-        print('NBR', end='')
-        sys.stdout.flush()
-    while first or ((not target is None) and re.search(target, output) is None):
+        print('NBR', end='', file=logf, flush=True)
+    while first or ((target is not None) and re.search(target, output) is None):
         first = False
         got_output = False
         try:
@@ -53,19 +52,20 @@ def nonblocking_read(queue, target = None, timeout = default_timeout, retries = 
                 got_output = True
         except Empty:
             pass
-        if not got_output:
+
+        if got_output:
             if verbosity >= 3:
-                print('.', end='')
-                sys.stdout.flush()
+                print(':', end='', file=logf, flush=True)
+            tries = 0
+        else:
+            if verbosity >= 3:
+                print('.', end='', file=logf, flush=True)
             tries += 1
             if tries >= retries:
                 break
-        elif verbosity >= 3:
-            print(':', end='')
-            sys.stdout.flush()
-        
+
     if verbosity >= 3:
-        print('')
+        print('', file=logf, flush=True)
     return output
 
 # yeah... should really use the asyncio interface from python3 or whatever
@@ -73,10 +73,11 @@ def nonblocking_read(queue, target = None, timeout = default_timeout, retries = 
 ######################################################################
 
 class MSPdebug(object):
-    def __init__(self, tty = None, verbosity = 0):
+    def __init__(self, tty = None, logf = sys.stdout, verbosity = 0, max_launch_attempts = 5):
+        self.logf = logf
         self.verbosity = verbosity
         if self.verbosity >= 3:
-            print(str(self) + ' created')
+            print(str(self) + ' created', file=self.logf)
         self.tty = tty
         mspargs = ['mspdebug', 'tilib']
         if not self.tty is None:
@@ -84,36 +85,62 @@ class MSPdebug(object):
 
         # regexes used to control reading
         self.prompt_re = re.compile(re.escape('(mspdebug)'))
+        self.start_re = re.compile(re.escape('Press Ctrl+D to quit.'))
         self.run_re = re.compile(re.escape('Running. Press Ctrl+C to interrupt...'))
         self.exit_re = re.compile(re.escape('MSP430_Close'))
 
-        # the Popen object itself
-        self.mspdebug = subprocess.Popen(mspargs, universal_newlines=True, stdin=subprocess.PIPE, 
-                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.max_launch_attempts = max_launch_attempts
+        self.launch_attempts = 0
 
-        # massive pile of threading code for nonblocking IO
-        self.io_active = [True]
-        self.stdout_q = Queue()
-        self.stdout_t = Thread(target=enqueue_output,
-                               args=(self.mspdebug.stdout, self.stdout_q, self.io_active))
-        self.stdout_t.daemon = True
-        self.stdout_t.start()
-        self.stderr_q = Queue()
-        self.stderr_t = Thread(target=enqueue_output,
-                               args=(self.mspdebug.stderr, self.stderr_q, self.io_active))
-        self.stderr_t.daemon = True
-        self.stderr_t.start()
+        while self.launch_attempts < self.max_launch_attempts:
+            # the Popen object itself
+            self.mspdebug = subprocess.Popen(mspargs, universal_newlines=True, stdin=subprocess.PIPE, 
+                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            # massive pile of threading code for nonblocking IO
+            self.io_active = [True]
+            self.stdout_q = Queue()
+            self.stdout_t = Thread(target=enqueue_output,
+                                   args=(self.mspdebug.stdout, self.stdout_q, self.io_active))
+            self.stdout_t.daemon = True
+            self.stdout_t.start()
+            self.stderr_q = Queue()
+            self.stderr_t = Thread(target=enqueue_output,
+                                   args=(self.mspdebug.stderr, self.stderr_q, self.io_active))
+            self.stderr_t.daemon = True
+            self.stderr_t.start()
+
+            # wait until the connection is established and throw away startup output
+            startup_output = self._response()
+            if self.verbosity >= 4:
+                print(startup_output, file=self.logf)
+
+            self.launch_attempts += 1
+
+            start_match = self.start_re.search(startup_output)
+            if start_match is not None:
+                if self.verbosity >= 3:
+                    print('{:s} launched successfully, {:d} attempts'.format(str(self), self.launch_attempts), 
+                          file=self.logf)
+                break
+
+            print('WARNING: {:s} failed to launch, attempt {:d} of {:d}'
+                  .format(str(self), self.launch_attempts, self.max_launch_attempts),
+                  file=self.logf)
+            print('Output on launch:', file=self.logf)
+            print(startup_output, file=self.logf)
+            self._close()
         
-        # wait until the connection is established and throw away startup output
-        startup_output = self._response()
-        if self.verbosity >= 4:
-            print(startup_output)
+            if self.launch_attempts < self.max_launch_attempts:
+                print('WARNING: trying to launch again...', file=self.logf)
+            else:
+                raise IOError('{:s} failed to open connection to driver, abort'.format(str(self)))
 
     # core interface
 
     def _issue_cmd(self, cmd):
         if self.verbosity >= 1:
-            print('sending: ' + cmd)
+            print('sending: ' + cmd, file=self.logf)
         self.mspdebug.stdin.write(cmd + '\n')
         self.mspdebug.stdin.flush()
 
@@ -123,12 +150,12 @@ class MSPdebug(object):
                 target_str = ''
             else:
                 target_str = ' (until ' + target.pattern + ')'
-            print('-- reading from stdout{:s} (retries={:d}) --'.format(target_str, retries))
+            print('-- reading from stdout{:s} (retries={:d}) --'.format(target_str, retries), file=self.logf)
         output = nonblocking_read(self.stdout_q, target=target, retries=retries, 
-                                  verbosity=self.verbosity)
+                                  logf=self.logf, verbosity=self.verbosity)
         if self.verbosity >= 3:
-            print(utils.summarize_triple(output))
-            print('----')
+            print(utils.summarize_triple(output), file=self.logf)
+            print('----', file=self.logf)
         return output
 
     def _read_stderr(self, target = None, retries = default_retries):
@@ -137,25 +164,25 @@ class MSPdebug(object):
                 target_str = ''
             else:
                 target_str = ' (until ' + target.pattern + ')'
-            print('-- reading from stderr{:s} (retries={:d}) --'.format(target_str, retries))
-        output = nonblocking_read(self.stdout_q, target=target, retries=retries,
-                                  verbosity=self.verbosity)
+            print('-- reading from stderr{:s} (retries={:d}) --'.format(target_str, retries), file=self.logf)
+        output = nonblocking_read(self.stderr_q, target=target, retries=retries,
+                                  logf=self.logf, verbosity=self.verbosity)
         if self.verbosity >= 3:
-            print(utils.summarize_triple(output))
-            print('----')
+            print(utils.summarize_triple(output), file=self.logf)
+            print('----', file=self.logf)
         return output
     
     # context manager interface
 
     def _close(self):
         if self.verbosity >= 2:
-            print('Killing mspdebug...')
+            print('Killing mspdebug...', file=self.logf)
         self._issue_cmd('exit')
         self._read_stdout(target=self.exit_re)
         stderr_output = self._read_stderr()
         if len(stderr_output) > 0:
-            print('Unexpected output from mspdebug on stderr:')
-            print(stderr_output)
+            print('Unexpected output from mspdebug on stderr:', file=self.logf)
+            print(stderr_output, file=self.logf)
 
         self.io_active[0] = False
         self.stdout_t.join()
@@ -165,30 +192,30 @@ class MSPdebug(object):
             self.mspdebug.communicate()
         except IOError as e:
             if self.verbosity >= 2:
-                print('Bad concurrent IO:')
-                print(e)
+                print('Bad concurrent IO:', file=self.logf)
+                print(e, file=self.logf)
         except Exception as e:
             if self.verbosity >= 0:
-                print('Unexpected exception:')
-                print(e)
+                print('Unexpected exception:', file=self.logf)
+                print(e, file=self.logf)
         finally:
             if self.mspdebug.poll() is None:
                 if self.verbosity >= 2:
-                    print('mspdebug did not shut itself down, sending SIGTERM')
+                    print('mspdebug did not shut itself down, sending SIGTERM', file=self.logf)
                 term = self.mspdebug.terminate()
                 if self.verbosity >= 2:
-                    print(str(term))
+                    print(str(term), file=self.logf)
             if self.verbosity >= 2:
-                print('... Done.')
+                print('... Done.', file=self.logf)
 
     def __enter__(self):
         if self.verbosity >= 3:
-            print(str(self) + ' passed into context')
+            print(str(self) + ' passed into context', file=self.logf)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.verbosity >= 3:
-            print(str(self) + ' exiting')
+            print(str(self) + ' exiting', file=self.logf)
         self._close()
 
     # internal helpers
@@ -198,12 +225,31 @@ class MSPdebug(object):
         output_stderr = self._read_stderr()
 
         if len(output_stderr) > 0:
-            print('WARNING: unexpected output from mspdebug on stderr:')
-            print(output_stderr)
+            print('WARNING: unexpected output from mspdebug on stderr:', file=self.logf)
+            print(output_stderr, file=self.logf)
 
-        prompt_match = re.search(self.prompt_re, output)
+        prompt_match = self.prompt_re.search(output)
         if prompt_match is None:
-            return output
+            print('WARNING: failed to read prompt. Read:', file=self.logf)
+            print(output, file=self.logf)
+            print('WARNING: hard-coded wait for 3 seconds and try again...', file=self.logf)
+
+            time.sleep(3)
+            output2 = self._read_stdout(target=self.prompt_re)
+            output_stderr2 = self._read_stderr()
+            if len(output_stderr) > 0:
+                print('WARNING: unexpected output from mspdebug on stderr during second read:', file=self.logf)
+                print(output_stderr, file=self.logf)
+            output += output2
+            output_stderr += output_stderr2
+
+            prompt_match = self.prompt_re.search(output)
+            if prompt_match is None:
+                print('WARNING: SEVERE: still failed to read prompt. Second read:', file=self.logf)
+                print(output2, file=self.logf)
+                print('WARNING: SEVERE: returning output as-is', file=self.logf)
+                return output
+
         i = prompt_match.start()
         if 0 <= i < len(output):
             return output[0:i].strip()
@@ -215,8 +261,8 @@ class MSPdebug(object):
         output_stderr = self._read_stderr()
 
         if len(output_stderr) > 0:
-            print('WARNING: unexpected output from mspdebug on stderr:')
-            print(output_stderr)
+            print('WARNING: unexpected output from mspdebug on stderr:', file=self.logf)
+            print(output_stderr, file=self.logf)
 
         return
 
@@ -282,8 +328,7 @@ if __name__ == '__main__':
 
         # prompt the user
         def prompt():
-            print('> ', end='')
-            sys.stdout.flush()
+            print('> ', end='', flush=True)
 
         # relay commands from user
         prompt()
