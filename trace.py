@@ -318,7 +318,7 @@ def walk_par(fn, targetdir, cargs, n_procs = 1, verbosity = 0):
         return pool.map(fn, worklists)
 
 def process_micros(args):
-    (k, files, (check, execute, tinfo, suffix, abort_on_error, tty, verbosity)) = args
+    (k, files, (check, execute, tinfo, suffix, abort_on_error, ttys, verbosity)) = args
     i = 0
     retrace_differences = []
     blocks = []
@@ -337,7 +337,12 @@ def process_micros(args):
                     else:
                         continue
             if execute:
-                assert k == 0, 'microbenchmark execution only supports one process'
+                if ttys is None:
+                    assert k == 0, 'specify multiple TTYs to run more than one process'
+                    tty = None
+                else:
+                    assert 0 <= k and k < len(ttys), 'must specify at least one TTY per process'
+                    tty = ttys[k]
                 try:
                     trace_elf(elfpath, jpath, tty=tty, verbosity=verbosity)
                 except Exception:
@@ -354,13 +359,10 @@ def process_micros(args):
     return i, retrace_differences, blocks
 
 def walk_micros(testdir, check, execute, tinfo, suffix = '.elf', abort_on_error = True,
-                tty = None, verbosity = 0, n_procs = 1):
-    if execute and n_procs != 1:
-        print('Warning: microbenchmark execution only supports one process, using n_procs=1')
-        n_procs = 1
+                ttys = None, verbosity = 0, n_procs = 1):
 
     retrace_data = walk_par(process_micros, testdir, 
-                                   (check, execute, tinfo, suffix, abort_on_error, tty, verbosity),
+                                   (check, execute, tinfo, suffix, abort_on_error, ttys, verbosity),
                                    n_procs=n_procs, verbosity=verbosity)
 
     count = 0
@@ -443,7 +445,7 @@ def main(args):
     abort_on_error = not args.noabort
     trprefix = args.trprefix
     tinfo_name = args.timing
-    tty = args.tty
+    ttys = args.tty
     verbosity = args.verbose
 
     did_work = False
@@ -458,7 +460,7 @@ def main(args):
         did_work = True
         interesting_blocks = walk_micros(testdir, check, execute, tinfo, 
                                          suffix=suffix, abort_on_error=abort_on_error,
-                                         n_procs=n_procs, tty=tty, verbosity=verbosity)
+                                         n_procs=n_procs, ttys=ttys, verbosity=verbosity)
     else:
         interesting_blocks = None
 
@@ -546,8 +548,8 @@ if __name__ == '__main__':
                         help='run in parallel on this many cores')
     parser.add_argument('-trprefix', default='',
                         help='only read traces with this prefix')
-    parser.add_argument('-tty', default=None,
-                        help='connect to mspdebug on this TTY')
+    parser.add_argument('-tty', default=None, nargs='+',
+                        help='connect to mspdebug on these TTYs')
 
 
     args = parser.parse_args()
