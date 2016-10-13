@@ -98,9 +98,12 @@ def mk_writefields_dst_Rn(ins):
         if fields['rdst'] == 0:
             if fields['bw'] == 1 and ins.name not in {'CMP', 'BIT'}:
                 raise base.UnknownBehavior('fmt1 .B to PC')
-            elif fields['dst'] != fields['pc']:
-                raise base.UnknownBehavior('fmt1 indirect control flow: pc {:05x}, indirect to {:05x}'
-                                           .format(fields['pc'], fields['dst']))
+            elif ins.name not in {'CMP', 'BIT', 'MOV'}:
+                raise base.UnknownBehavior('fmt1 arithmetic not supported on PC (PUSH bug)')
+            # we do permit BR
+            # elif fields['dst'] != fields['pc']:
+            #     raise base.UnknownBehavior('fmt1 indirect control flow: pc {:05x}, indirect to {:05x}'
+            #                                .format(fields['pc'], fields['dst']))
         # and for writes to unmodeled SR bits
         elif fields['rdst'] == 2:
             if fields['dst'] & ((~263) & 0xfffff) != 0:

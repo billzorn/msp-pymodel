@@ -613,8 +613,61 @@ def round_7(blocks):
     success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual_state, z3_data, cx_max)
     if not success:
         do_round_instr_subset(blocks, mk_add_constraint_instr_state, z3_data, ipreds)
+
+def round_8(blocks):
+    cx_max = 5
+
+    print('SMT timing analysis round 8.')
+
+    ipreds = {ins : z3.Bool('p_' + smt_iname(ins)) for ins in isa.ids_ins}
+    inst_dt = create_instr_datatype()
+    reg_dt = create_reg_datatype()
+    state_dt = create_state_datatype('r8', 2)
+
+    time_fn_noreg = z3.Function('time_r8_noreg', state_dt, inst_dt, z3.IntSort())
+    time_fn_rsrc = z3.Function('time_r8_rsrc', state_dt, inst_dt, reg_dt, z3.IntSort())
+    time_fn_rdst = z3.Function('time_r8_rdst', state_dt, inst_dt, reg_dt, z3.IntSort())
+    time_fn_rsrc_rdst = z3.Function('time_r8_rsrc_rdst', state_dt, inst_dt, reg_dt, reg_dt, z3.IntSort())
+    state_fn_default = z3.Function('state_r8_default', state_dt, inst_dt, state_dt)
+    state_fn_init = z3.Function('state_r8_init', state_dt)
+
+    def time_fn(ins, fields, state):
+        iname = smt_iname(ins)
+        if ins.fmt in {'fmt1'} and (ins.smode in {'@Rn', '@Rn+'} or ins.dmode in {'Rn'}):
+            if   ins.smode in {'@Rn', '@Rn+'} and ins.dmode in {'Rn'}:
+                rsname = smt_rsrc(fields)
+                rdname = smt_rdst(fields)
+                return time_fn_rsrc_rdst(state, 
+                                         inst_dt.__dict__[iname], 
+                                         reg_dt.__dict__[rsname], 
+                                         reg_dt.__dict__[rdname])
+            elif ins.smode in {'@Rn', '@Rn+'}:
+                rname = smt_rsrc(fields)
+                return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+            else:
+                rname = smt_rdst(fields)
+                return time_fn_rdst(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        elif ins.name in {'PUSH', 'CALL'} and ins.smode in {'X(Rn)'}:
+            rname = smt_rsrc(fields)
+            return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
+        elif ins.name in {'PUSH'} and ins.smode in {'@Rn', '@Rn+'}:
+            rname = smt_rsrc(fields)
+            return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])            
+        else:
+            return time_fn_noreg(state, inst_dt.__dict__[iname])
+
+    def state_fn(ins, fields, state):
+        iname = smt_iname(ins)
+        return state_fn_default(state, inst_dt.__dict__[iname])
+
+    z3_data = (time_fn, state_fn, state_fn_init, 
+               [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst, state_fn_default, state_fn_init])
+    success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual_state, z3_data, cx_max)
+    if not success:
+        do_round_instr_subset(blocks, mk_add_constraint_instr_state, z3_data, ipreds)
     else:
-        create_model_table_7(solver, z3_data, 'NEW_model.pickle')
+        create_model_table_8(solver, z3_data, 'NEW_model.pickle')
+
 
 def split_function_string(fstr):
     lines = fstr.strip().strip('[]').split('\n')
@@ -627,7 +680,7 @@ def split_function_string(fstr):
         cases.append((arg, res))
     return cases
 
-def classify_instr_7():
+def classify_instr_8():
     i_noreg = []
     i_rsrc = []
     i_rdst = []
@@ -643,14 +696,16 @@ def classify_instr_7():
                 i_rdst.append(iname)
         elif ins.name in {'PUSH', 'CALL'} and ins.smode in {'X(Rn)'}:
             i_rsrc.append(iname)
+        elif ins.name in {'PUSH'} and ins.smode in {'@Rn', '@Rn+'}:
+            i_rsrc.append(iname)
         else:
             i_noreg.append(iname)
     return i_noreg, i_rsrc, i_rdst, i_rsrc_rdst
 
-def get_state_id_7(statestr):
+def get_state_id_8(statestr):
     return int(statestr.split('_')[-1].strip())
 
-def create_model_table_7(solver, z3_data, pname):
+def create_model_table_8(solver, z3_data, pname):
     (time_fn, state_fn, state_fn_init, 
      [time_fn_noreg, 
       time_fn_rsrc, 
@@ -668,9 +723,9 @@ def create_model_table_7(solver, z3_data, pname):
     state_strings = str(model[state_fn_default])
 
     inames = {smt_iname(ins) : ins for ins in isa.ids_ins}
-    i_noreg, i_rsrc, i_rdst, i_rsrc_rdst = classify_instr_7()
+    i_noreg, i_rsrc, i_rdst, i_rsrc_rdst = classify_instr_8()
     states = [0, 1]
-    state_default = get_state_id_7(state0_strings)
+    state_default = get_state_id_8(state0_strings)
 
     noreg_pool = set([(s, x) for s in states for x in i_noreg])
     rsrc_pool = set([(s, x, r) for s in states for x in i_rsrc for r in smt_rnames.values()])
@@ -691,7 +746,7 @@ def create_model_table_7(solver, z3_data, pname):
             noreg_else = int(res)
         else:
             (statestr, iname) = arg
-            state = get_state_id_7(statestr)
+            state = get_state_id_8(statestr)
             if (state, iname) in noreg_pool:
                 noreg_pool.remove((state, iname))
                 ttab[(state, iname, None, None)] = int(res)
@@ -709,7 +764,10 @@ def create_model_table_7(solver, z3_data, pname):
             ttab[(state, iname, None, None)] = ttab[(state_default, iname, None, None)]
         else:
             ins = inames[iname]
-            if ins.name in {'RETI'} and ins.smode not in {'Rn'}:
+            if ins.fmt in {'EXT'}:
+                print('stub: {:d} {:s}'.format(state, iname))
+                ttab[(state, iname, None, None)] = None
+            elif ins.name in {'RETI'} and ins.smode not in {'Rn'}:
                 print('invalid: {:d} {:s}'.format(state, iname))
                 ttab[(state, iname, None, None)] = None
             elif ins.name in {'CALL'} and ins.smode in {'#1'}:
@@ -729,7 +787,7 @@ def create_model_table_7(solver, z3_data, pname):
             rsrc_else = int(res)
         else:
             (statestr, iname, rname) = arg
-            state = get_state_id_7(statestr)
+            state = get_state_id_8(statestr)
             if (state, iname, rname) in rsrc_pool:
                 rsrc_pool.remove((state, iname, rname))
                 ttab[(state, iname, rname, None)] = int(res)
@@ -758,6 +816,10 @@ def create_model_table_7(solver, z3_data, pname):
             elif ins.smode in {'X(Rn)'} and rname in {smt_rnames[0], smt_rnames[2], smt_rnames[3]}:
                 invmode += 1
                 ttab[(state, iname, rname, None)] = None
+            elif ins.name in {'PUSH', 'CALL'} and ins.smode in {'X(Rn)', '@Rn', '@Rn+'} and rname in {smt_rnames[1]}:
+                invmode += 1
+                ttab[(state, iname, rname, None)] = None
+
             else:
                 print('using else {:d} for {:s}'.format(rsrc_else, repr((state, iname, rname))))
                 ttab[(state, iname, rname, None)] = rsrc_else
@@ -770,7 +832,7 @@ def create_model_table_7(solver, z3_data, pname):
             rdst_else = int(res)
         else:
             (statestr, iname, rname) = arg
-            state = get_state_id_7(statestr)
+            state = get_state_id_8(statestr)
             if (state, iname, rname) in rdst_pool:
                 rdst_pool.remove((state, iname, rname))
                 ttab[(state, iname, None, rname)] = int(res)
@@ -809,7 +871,7 @@ def create_model_table_7(solver, z3_data, pname):
             rsrc_rdst_else = int(res)
         else:
             (statestr, iname, rsname, rdname) = arg
-            state = get_state_id_7(statestr)
+            state = get_state_id_8(statestr)
             if (state, iname, rsname, rdname) in rsrc_rdst_pool:
                 rsrc_rdst_pool.remove((state, iname, rsname, rdname))
                 ttab[(state, iname, rsname, rdname)] = int(res)
@@ -854,17 +916,15 @@ def create_model_table_7(solver, z3_data, pname):
     stab = {}
     
     state_else = None
-
-    state_else = None
     for arg, res in split_function_string(state_strings):
         if arg == ('else',):
-            state_else = get_state_id_7(res)
+            state_else = get_state_id_8(res)
         else:
             (statestr, iname) = arg
-            state = get_state_id_7(statestr)
+            state = get_state_id_8(statestr)
             if (state, iname) in state_pool:
                 state_pool.remove((state, iname))
-                stab[(state, iname)] = get_state_id_7(res)
+                stab[(state, iname)] = get_state_id_8(res)
             else:
                 print('not in pool: {:s}'.format(repr((state, iname))))
     print('state_pool has {:d} remaining entries'.format(len(state_pool)))
@@ -877,132 +937,6 @@ def create_model_table_7(solver, z3_data, pname):
 
     with open(pname, 'wb') as f:
         pickle.dump({'state_default':state_default, 'ttab':ttab, 'stab':stab}, f)
-
-
-
-
-
-
-
-
-
-
-
-
-def round_8(blocks, verbosity = 1):
-    cx_max = 1000
-    
-    if verbosity >= 1:
-        print('SMT timing analysis round 8.')
-
-    ipreds = {ins : z3.Bool('p_' + smt_iname(ins)) for ins in isa.ids_ins}
-    inst_dt = create_instr_datatype()
-    reg_dt = create_reg_datatype()
-    state_dt = create_state_datatype('r8', 2)
-
-    time_fn_noreg = z3.Function('time_r8_noreg', state_dt, inst_dt, z3.IntSort())
-    time_fn_rsrc = z3.Function('time_r8_rsrc', state_dt, inst_dt, reg_dt, z3.IntSort())
-    time_fn_rdst = z3.Function('time_r8_rdst', state_dt, inst_dt, reg_dt, z3.IntSort())
-    time_fn_rsrc_rdst = z3.Function('time_r8_rsrc_rdst', state_dt, inst_dt, reg_dt, reg_dt, z3.IntSort())
-    state_fn_default = z3.Function('state_r8_default', state_dt, inst_dt, state_dt)
-    state_fn_init = z3.Function('state_r8_init', state_dt)
-
-    def time_fn(ins, fields, state):
-        iname = smt_iname(ins)
-        if ins.fmt in {'fmt1'} and (ins.smode in {'@Rn', '@Rn+'} or ins.dmode in {'Rn'}):
-            if   ins.smode in {'@Rn', '@Rn+'} and ins.dmode in {'Rn'}:
-                rsname = smt_rsrc(fields)
-                rdname = smt_rdst(fields)
-                return time_fn_rsrc_rdst(state, 
-                                         inst_dt.__dict__[iname], 
-                                         reg_dt.__dict__[rsname], 
-                                         reg_dt.__dict__[rdname])
-            elif ins.smode in {'@Rn', '@Rn+'}:
-                rname = smt_rsrc(fields)
-                return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
-            else:
-                rname = smt_rdst(fields)
-                return time_fn_rdst(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
-        elif ins.name in {'PUSH', 'CALL'} and ins.smode in {'X(Rn)'}:
-            rname = smt_rsrc(fields)
-            return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
-        elif ins.name in {'PUSH'} and ins.smode in {'@Rn', '@Rn+'}:
-            rname = smt_rsrc(fields)
-            return time_fn_rsrc(state, inst_dt.__dict__[iname], reg_dt.__dict__[rname])
-        else:
-            return time_fn_noreg(state, inst_dt.__dict__[iname])
-
-    def state_fn(ins, fields, state):
-        iname = smt_iname(ins)
-        return state_fn_default(state, inst_dt.__dict__[iname])
-
-    z3_data = (time_fn, state_fn, state_fn_init, 
-               [time_fn_noreg, time_fn_rsrc, time_fn_rdst, time_fn_rsrc_rdst, state_fn_default, state_fn_init])
-    success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual_state, z3_data, cx_max, verbosity=verbosity)
-
-    return success, solver, s_preds
-    # if not success:
-    #     do_round_instr_subset(blocks, mk_add_constraint_instr_state, z3_data, ipreds)
-    #     return None
-    # else:
-    #     #print('NO MODEL CLEANING CODE')
-    #     #create_model_table_7(solver, z3_data, 'NEW_model.pickle')
-    #     return success, solver, s_preds
-
-
-
-
-
-
-
-
-
-def round_9(blocks):
-    cx_max = 20
-
-    print('SMT timing analysis round 9.')
-
-    ipreds = {ins : z3.Bool('p_' + smt_iname(ins)) for ins in isa.ids_ins}
-    inst_dt = create_instr_datatype()
-    reg_dt = create_reg_datatype()
-    state_dt = create_state_datatype('r9', 2)
-
-    time_fn_rsrc_rdst = z3.Function('time_r9_rsrc_rdst', state_dt, inst_dt, reg_dt, reg_dt, z3.IntSort())
-    state_fn_default = z3.Function('state_r9_default', state_dt, inst_dt, state_dt)
-    state_fn_init = z3.Function('state_r9_init', state_dt)
-
-    def time_fn(ins, fields, state):
-        iname = smt_iname(ins)
-        rsname = smt_rsrc(fields)
-        rdname = smt_rdst(fields)
-        return time_fn_rsrc_rdst(state, 
-                                 inst_dt.__dict__[iname], 
-                                 reg_dt.__dict__[rsname], 
-                                 reg_dt.__dict__[rdname])
-
-    def state_fn(ins, fields, state):
-        iname = smt_iname(ins)
-        return state_fn_default(state, inst_dt.__dict__[iname])
-
-    z3_data = (time_fn, state_fn, state_fn_init, 
-               [time_fn_rsrc_rdst, state_fn_default, state_fn_init])
-    success, solver, s_preds = do_round_cx(blocks, mk_add_constraint_individual_state, z3_data, cx_max)
-    if not success:
-        do_round_instr_subset(blocks, mk_add_constraint_instr_state, z3_data, ipreds)
-    else:
-        print('NO MODEL CLEANING CODE')
-        #create_model_table_7(solver, z3_data, 'NEW_model.pickle')
-
-
-
-
-
-
-
-
-
-
-
 
 
 

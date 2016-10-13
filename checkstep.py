@@ -31,16 +31,32 @@ def step_and_sync(cosim, maxter_idx, mulator):
         print('-- register mismatch @ {:05x} --'.format(pc))
         utils.explain_diff(regdiff)
         cosim.sync(master_idx, diff={'regs':regdiff})
-    
-    recent_io = mulator.iotrace2[-1]
-    #utils.print_dict(recent_io)
-    for addr, value in recent_io['w']['mem']:
+
+        # check timer state if we have a timer, just for kicks...
+        if mulator.timing:
+            mems, diff = cosim.md(0x0350, 2)
+            if len(diff) > 0:
+                # mismatch = True
+                # print('-- timer mismatch @ {:05x} --'.format(pc))
+                # utils.explain_diff(diff)
+                cosim.sync(master_idx, diff=diff)
+
+    recent_writes = mulator.iotrace2[-1]['w']['mem']
+    for addr, value in recent_writes:
         if ((model.ram_start <= addr and addr < model.ram_start + model.ram_size)
             or (model.fram_start <= addr and addr < model.fram_start + model.fram_size)):
-            mems, diff = cosim.md(addr, 1)
+            # merge into word writes
+            size = 1
+            descr = 'byte'
+            if addr % 2 == 0 and addr + 1 in recent_writes:
+                size = 2
+                descr = 'word'
+            elif addr % 2 == 1 and addr - 1 in recent_writes:
+                continue
+            mems, diff = cosim.md(addr, size)
             if len(diff) > 0:
                 mismatch = True
-                print('-- mem mismatch @ {:05x}, write to {:05x} --'.format(pc, addr))
+                print('-- mem mismatch @ {:05x}, {:s} write to {:05x} --'.format(pc, descr, addr))
                 utils.explain_diff(diff)
                 cosim.sync(master_idx, diff=diff)
 
@@ -52,12 +68,13 @@ def step_and_sync(cosim, maxter_idx, mulator):
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
-        print('usage: {:s} <ELF> [MODEL]'.format(sys.argv[0]))
+        print('usage: {:s} <ELF> <TTY> [MODEL]'.format(sys.argv[0]))
         exit(1)
 
     fname = sys.argv[1]
-    if len(sys.argv) >= 3:
-        tname = sys.argv[2]
+    tty = sys.argv[2]
+    if len(sys.argv) >= 4:
+        tname = sys.argv[3]
 
     if tname:
         with open(tname, 'rb') as f:
@@ -65,11 +82,10 @@ if __name__ == '__main__':
     else:
         tinfo = None
 
-
     sync_every = 100
 
     # bring up cosim
-    with MSPdebug(verbosity=0) as driver:
+    with MSPdebug(tty=tty, verbosity=0) as driver:
         mulator = Emulator(verbosity=0, tracing=True, tinfo=tinfo)
         mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
         cosim = Cosim([driver, mulator], [True, False], mmap)

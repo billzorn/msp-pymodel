@@ -71,18 +71,26 @@ def describe_regs(regs):
     return regstr
 
 def parse_regs(dump):
-    lines = dump.strip().split('\n')
-    if lines[0].strip() == 'regs':
-        lines = lines[1:]
-    if len(lines) < 4:
-        raise ValueError('register dump too short:\n' + dump)
-    lines = lines[:4]
-    regvals = []
-    for line in lines:
-        valstrs = re.findall(r'\([^()]*:[^()]*\)', line)
-        regvals += map(lambda v: int(v[1:-1].split(':')[1].strip(), 16), valstrs)
-    # need to shuffle to fix the ordering
-    return [regvals[i * 4 + j] for j in range(0, 4) for i in range(0, 4)]
+    try:
+        lines = dump.strip().split('\n')
+        if lines[0].strip() == 'regs':
+            lines = lines[1:]
+        if len(lines) < 4:
+            raise ValueError('register dump too short:\n' + dump)
+        lines = lines[:4]
+        regvals = []
+        for line in lines:
+            valstrs = re.findall(r'\([^()]*:[^()]*\)', line)
+            regvals += map(lambda v: int(v[1:-1].split(':')[1].strip(), 16), valstrs)
+        # need to shuffle to fix the ordering
+        return [regvals[i * 4 + j] for j in range(0, 4) for i in range(0, 4)]
+    except Exception as e:
+        print('====')
+        print(dump)
+        print('----')
+        print(repr(dump))
+        print('====')
+        raise e
 
 def describe_memory_row(mem, addr, idx, cols = 16):
     used_cols = min(cols, len(mem) - idx)

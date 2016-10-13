@@ -364,12 +364,21 @@ def process_micros(args):
                 else:
                     assert 0 <= k and k < len(ttys), 'must specify at least one TTY per process'
                     tty = ttys[k]
-                try:
-                    trace_elf(elfpath, jpath, tty=tty, logname=logname, verbosity=verbosity)
-                except Exception:
-                    traceback.print_exc()
-                    if abort_on_error:
+
+                # MAKE THIS A REAL OPTION PLS
+                max_retries = 3
+                retries = 0
+                while retries < max_retries:
+                    try:
+                        trace_elf(elfpath, jpath, tty=tty, logname=logname, verbosity=verbosity)
                         break
+                    except Exception:
+                        traceback.print_exc()
+                        retries += 1
+
+                if abort_on_error and retries >= max_retries:
+                    break
+
             if tinfo:
                 same = retrace_elf(elfpath, jpath, tinfo, blocks, verbosity=verbosity)
                 if not same:

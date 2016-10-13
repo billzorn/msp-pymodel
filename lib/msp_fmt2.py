@@ -166,6 +166,7 @@ def mk_writefields_call(ins):
             raise base.UnknownBehavior('CALL indirect through SP unsupported')
         # I don't know what happens if, for example, the sp isn't word aligned...
         sp = instr.regadd(state.readreg(1), -2)
+        state.writereg(1, sp)
         # What about the high bits of the pc ????
         model.mk_write16(state.write8)(sp, fields['pc'])
         state.writereg(0, fields['src'])

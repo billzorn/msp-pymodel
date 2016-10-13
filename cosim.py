@@ -174,7 +174,7 @@ def repl(cosim, master_idx):
 
         prompt()
 
-def main(fname = None, emulate = False, tinfo = None, verbosity = 1):
+def main(fname = None, emulate = False, tinfo = None, tty = None, verbosity = 1):
     mmap = [(model.ram_start, model.ram_size), (model.fram_start, model.fram_size)]
     mulator = Emulator(tracing=True, tinfo=tinfo, verbosity=verbosity)
 
@@ -188,7 +188,7 @@ def main(fname = None, emulate = False, tinfo = None, verbosity = 1):
         repl(cosim, master_idx)
 
     else:
-        with MSPdebug(verbosity=verbosity) as driver:
+        with MSPdebug(tty=tty, verbosity=verbosity) as driver:
             cosim = Cosim([driver, mulator], [True, False], mmap)
             master_idx = 0
 
@@ -213,6 +213,8 @@ if __name__ == '__main__':
                         help='use this pickled timing model to emulate Timer_A')
     parser.add_argument('-v', '--verbose', type=int, default=1,
                         help='verbosity level')
+    parser.add_argument('-tty', default=None,
+                        help='connect to mspdebug on this TTY')
     
     args = parser.parse_args()
 
@@ -241,5 +243,5 @@ if __name__ == '__main__':
     else:
         tinfo = None
 
-    main(fname=fname, emulate=args.emulator, tinfo=tinfo, verbosity=args.verbose)
+    main(fname=fname, emulate=args.emulator, tinfo=tinfo, tty=args.tty, verbosity=args.verbose)
     exit(0)

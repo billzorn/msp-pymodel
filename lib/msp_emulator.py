@@ -166,7 +166,7 @@ class Emulator(object):
             #         utils.print_dict(step_io)
             #         raise base.Breakpoint('manual')
 
-            # if pc == 0x997c:
+            # if pc == 0xfe84:
             #     print(hex(pc))
             #     raise base.Breakpoint('manual')
 

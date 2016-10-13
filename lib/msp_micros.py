@@ -484,6 +484,10 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
     # We do the destination mode for fmt1 before the source mode, as it might determine
     # what has to go in sval (for example, if our destination is PC or SR)
     if   dmode in {'Rn'}:
+        # right now we can't support general PC arithmetic...
+        if rdst in {0} and name not in {'MOV', 'CMP', 'BIT'}:
+            raise ValueError('condition: {:s} to PC unsupported (hardware diverges if previous instruction is PUSH!)'
+                             .format(name))
         if rdst in {0, 2}:
             # we still want to assert even if we don't need to set a specific source value
             assert not require_source_data
@@ -648,6 +652,9 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         actual_dmode = smode
         actual_rdst = rsrc
         actual_daddr = saddr
+        if not valid_writable_address(actual_daddr):
+            raise ValueError('conflict: cannot use source addr {:05x} to write destination of {:s}'
+                             .format(actual_daddr, name))
         # some fmt2 instructions have modes that are not well defined by the manual
         if actual_dmode in {'#1', '#N', '#@N'} or assem.has_cg(actual_dmode, actual_rdst):
             raise ValueError('condition: unsupported mode {:s} R{:d} for {:s}'
@@ -671,6 +678,7 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                     else:
                         info.overwrite_or_set_use(actual_rdst, 0)
             elif assem.modifies_destination(name):
+                # this isn't really used for the PC nowadays anyway...
                 if not is_fmt1_identity(name, sval):
                     raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
                                      .format(repr(sval), name, actual_dmode, actual_rdst))
@@ -923,16 +931,16 @@ if __name__ == '__main__':
     bad = 0
     err = 0
 
-    for codes in iter_to_depth(n):
-        # if codes[0][0] not in {'PUSH', 'CALL'}:
-        #     continue
+    for codes in iter_reps(n):
+        if codes[0][0] not in {'CALL'}:
+            continue
         print('-- {:s} --'.format(repr(codes)))
         try:
             code = emit_micro(0, codes)
-            # for instr_data in code:
-            #     print(repr(instr_data))
-            # words = assem.assemble_symregion(code, 0x4400, {'HALT_FAIL':0x4000})
-            # utils.printhex(words)
+            for instr_data in code:
+                print(repr(instr_data))
+            words = assem.assemble_symregion(code, 0x4400, {'HALT_FAIL':0x4000})
+            utils.printhex(words)
         except ValueError as e:
             if str(e).startswith('condition'):
                 print('unsupported')

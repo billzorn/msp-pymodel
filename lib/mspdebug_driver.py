@@ -111,7 +111,7 @@ class MSPdebug(object):
             self.stderr_t.start()
 
             # wait until the connection is established and throw away startup output
-            startup_output = self._response()
+            startup_output = self._response(expect_stderr='warning: unknown chip')
             if self.verbosity >= 4:
                 print(startup_output, file=self.logf)
 
@@ -220,13 +220,14 @@ class MSPdebug(object):
 
     # internal helpers
 
-    def _response(self):
+    def _response(self, expect_stderr = None):
         output = self._read_stdout(target=self.prompt_re)
         output_stderr = self._read_stderr()
 
         if len(output_stderr) > 0:
-            print('WARNING: unexpected output from mspdebug on stderr:', file=self.logf)
-            print(output_stderr, file=self.logf)
+            if expect_stderr is None or output_stderr.strip() != expect_stderr:
+                print('WARNING: unexpected output from mspdebug on stderr:', file=self.logf)
+                print(output_stderr, file=self.logf)
 
         prompt_match = self.prompt_re.search(output)
         if prompt_match is None:
