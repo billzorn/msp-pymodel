@@ -36,7 +36,7 @@ def is_reg_store(fields, rsrc):
 def is_reg_sub(fields, rsrc, rdst):
     return fields['words'] == [0x8000 | rsrc << 8 | rdst]
 
-run_max_steps = 10000
+run_max_steps = 20000
 run_interval = 1
 run_passes = 5
 
@@ -50,6 +50,7 @@ def check_elf(elfname, verbosity = 0):
             print('Invalid prog write to reserved fram region:')
             print(utils.triple_summarize(fram_end, model.upper_start - 256))
             return False
+    resetvec = fram_end[-2:]
 
     for i in range(run_passes):
         success, steps = mulator.run(run_max_steps)
@@ -61,6 +62,17 @@ def check_elf(elfname, verbosity = 0):
                 if byte != 255:
                     print('Invalid run write to reserved fram region:')
                     print(utils.triple_summarize(fram_end, model.upper_start - 256))
+                    return False
+            if fram_end[-2:] != resetvec:
+                print('Broke the reset vector?')
+                print('was', resetvec)
+                print('now', fram_end[-2:])
+                return False
+            upper = mulator.md(model.upper_start, model.upper_size)
+            for byte in upper:
+                if byte != 255:
+                    print('Modified upper memory?')
+                    print(utils.triple_summarize(upper, model.upper_start))
                     return False
             touchdown = mulator.md(mulator.regs()[0], 16)
             expected_touchdown = [0xff, 0x3f, 0xff, 0x3f, 0xff, 0x3f, 0xff, 0x3f, 0xff, 0x3f, 0xff, 0x3f, 0xff, 0x3f, 0xf8, 0x3f]
@@ -469,6 +481,8 @@ def main(args):
     execute = args.execute
     jin_list = args.jsonin
     jout = args.jsonout
+    cjin_list = args.cjsonin
+    cjout = args.cjsonout
     arffname = args.arff
     smtround = args.smt
     n_procs = args.ncores
@@ -494,7 +508,7 @@ def main(args):
     else:
         interesting_blocks = None
 
-    if jout or arffname or smtround > 0:
+    if jout or cjout or arffname or smtround > 0:
         did_work = True
         if interesting_blocks is not None:
               blocks = interesting_blocks
@@ -506,10 +520,23 @@ def main(args):
                     print('read {:d} blocks from {:s}'
                           .format(len(new_blocks), jname))
                 blocks += new_blocks
-        else:
+        elif not cjin_list:
             blocks = walk_traces(testdir, prefix=trprefix, verbosity=verbosity, n_procs=n_procs)
+        else:
+            blocks = []
+
+        if cjin_list:
+            smt_blocks = []
+            for jname in cjin_list:
+                new_smt_blocks = extract_json(jname)
+                if verbosity >= 0:
+                    print('read {:d} smt blocks from {:s}'
+                          .format(len(new_smt_blocks), jname))
+                smt_blocks += new_smt_blocks
+        else:
+            smt_blocks = []
             
-        if len(blocks) <= 0:
+        if len(blocks) + len(smt_blocks) <= 0:
               print('no blocks found, nothing else to do')
               return
 
@@ -523,25 +550,37 @@ def main(args):
             if verbosity >= 0:
                 print('wrote {:d} blocks to {:s}'.format(len(blocks), arffname))
 
+        if cjout:
+            smt_blocks += smt.compress_blocks(blocks)
+            blocks = []
+            create_json(smt_blocks, cjout)
+            if verbosity >= 0:
+                print('wrote {:d} smt blocks to {:s}'.format(len(smt_blocks), cjout))
+
         if smtround > 0:
+
+            # destructive
+            smt_blocks += smt.compress_blocks(blocks)
+
             if   smtround == 1:
-                smt.round_1(blocks)
+                smt_blocks.reverse()
+                smt.round_1(smt_blocks)
             elif smtround == 2:
-                smt.round_2(blocks)
+                smt.round_2(smt_blocks)
             elif smtround == 3:
-                smt.round_3(blocks)
+                smt.round_3(smt_blocks)
             elif smtround == 4:
-                smt.round_4(blocks)
+                smt.round_4(smt_blocks)
             elif smtround == 5:
-                smt.round_5(blocks)
+                smt.round_5(smt_blocks)
             elif smtround == 6:
-                smt.round_6(blocks)
+                smt.round_6(smt_blocks)
             elif smtround == 7:
-                smt.round_7(blocks)
+                smt.round_7(smt_blocks)
             elif smtround == 8:
-                smt.round_8(blocks)
+                smt.round_8(smt_blocks)
             elif smtround == 9:
-                smt.round_9(blocks)
+                smt.round_9(smt_blocks)
 
     if not did_work:
         print('Nothing to do.')
@@ -564,6 +603,10 @@ if __name__ == '__main__':
                         help='read constraint blocks from json files')
     parser.add_argument('-jo', '--jsonout',
                         help='accumulate constraint blocks into raw json file')
+    parser.add_argument('-cji', '--cjsonin', nargs='+',
+                        help='read constraint blocks from smt-compressed json files')
+    parser.add_argument('-cjo', '--cjsonout',
+                        help='smt compress blocks into json file')
     parser.add_argument('-a', '--arff',
                         help='accumulate data into arff file')
     parser.add_argument('-s', '--smt', type=int, default=0,

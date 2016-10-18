@@ -8,9 +8,44 @@ z3.set_option(max_args=10000000, max_lines=1000000, max_depth=10000000, max_visi
 import utils
 from msp_isa import isa
 
+# Note that this doesn't work in memory... you will probably have to save the compressed JSON image
+# and reread it to get python to release it's hold on like 43GB of useless integer pools and stuff.
+
+def compress_blocks(blocks):
+    smt_blocks = []
+    print('compressing {:d} blocks in memory...'.format(len(blocks)))
+    while blocks:
+        addr, block, difference = blocks.pop()
+        new_block = [filter_fields(f) for f in block]
+        assert len(difference) == 2 and difference[1] == 0
+        cycles = difference[0]
+        smt_blocks.append((addr, new_block, cycles))
+    print('done.')
+    return smt_blocks
+
+field_idxs = {
+    'word' : 0,
+    'rsrc' : 1,
+    'rdst' : 2,
+    'isrc' : 3,
+    'jump_taken' : 4,
+    'jump_offset' : 5,
+}
+
+def filter_fields(fields):
+    new_fields = [None for k in field_idxs]
+    while fields:
+        k, v = fields.popitem()
+        if k == 'words':
+            new_fields[field_idxs['word']] = v[0]
+        elif k in field_idxs:
+            new_fields[field_idxs[k]] = v
+    fields_tuple = tuple(new_fields)
+    return fields_tuple
+
 # general framework for building these "solve(blocks)" type passes
 
-def create_block_ident(i, addr, block, difference):
+def create_block_ident(i, addr, block, cycles):
     return 't_{:d}_{:05x}'.format(i, addr)
 
 # General purpose solver loop. Define the desired behavior as functions and then pass
@@ -41,10 +76,8 @@ def solve_x(blocks, fn_add_constraint, fn_get_preds, fn_process_core, verbosity 
     s = z3.Solver()
     
     i = 0
-    for addr, block, difference in blocks:
-        ident = create_block_ident(i, addr, block, difference)
-        assert len(difference) == 2 and difference[1] == 0
-        cycles = difference[0]
+    for addr, block, cycles in blocks:
+        ident = create_block_ident(i, addr, block, cycles)
         fn_add_constraint(s, ident, block, cycles)
         i += 1
 
@@ -76,28 +109,28 @@ def solve_x(blocks, fn_add_constraint, fn_get_preds, fn_process_core, verbosity 
 def describe_block(block):
     ident, block, cycles = block
     for fields in block:
-        ins = isa.decode(fields['words'][0])
+        ins = isa.decode(fields[0])
         fmt, name, smode, dmode = isa.instr_to_modes(ins)
         if   fmt == 'fmt1':
-            rsrc = fields['rsrc']
-            rdst = fields['rdst']
-            if 'isrc' in fields:
-                sval = ', {:#x}'.format(fields['isrc'])
+            rsrc = fields[1]
+            rdst = fields[2]
+            if fields[3] is not None:
+                sval = ', {:#x}'.format(fields[3])
             else:
                 sval = ''
             print('{:s}\t{:s} (R{:d}{:s}), {:s} (R{:d})'
                   .format(name, smode, rsrc, sval, dmode, rdst))
         elif fmt == 'fmt2':
-            rsrc = fields['rsrc']
-            if 'isrc' in fields:
-                sval = ', {:#x}'.format(fields['isrc'])
+            rsrc = fields[1]
+            if fields[3] is not None:
+                sval = ', {:#x}'.format(fields[3])
             else:
                 sval = ''
             print('{:s}\t{:s} (R{:d}{:s})'
                   .format(name, smode, rsrc, sval))
         elif fmt == 'jump':
             print('{:s}\t{:d}, taken={:s}'
-                  .format(name, fields['jump_offset'], str(fields['jump_taken'])))
+                  .format(name, fields[5], str(fields[4])))
         else:
             print('{:s}, {:s}, {:s}, {:s}'.format(fmt, name, smode, dmode))
             utils.print_dict(fields)
@@ -153,8 +186,11 @@ def do_round_instr_subset(blocks, mk_add_constraint, z3_data, ipreds):
     removed_pred_names = []
     cx_instrs = [0]
     def process_core(core):
+        print('got a core with {:d} predicates:'.format(len(core)))
         for pred in core:
-            removed_pred_names.append(str(pred))
+            pname = str(pred)
+            print('  ' + pname)
+            removed_pred_names.append(pname)
         cx_instrs[0] = cx_instrs[0] + 1
         return False
 
@@ -206,13 +242,13 @@ def blacklist_std(ins, fields):
         (ins.name == 'MOV' and
          ins.smode == '&ADDR' and
          ins.dmode == 'Rn' and
-         fields['isrc'] == 0x0350),
+         fields[3] == 0x0350),
         # nop
         (ins.name == 'MOV' and
          ins.smode == 'Rn' and
          ins.dmode == 'Rn' and
-         fields['rsrc'] == 3 and
-         fields['rdst'] == 3),
+         fields[1] == 3 and
+         fields[2] == 3),
     ])
 
 smt_rnames = {
@@ -225,8 +261,8 @@ smt_rnames = {
 }
 
 def smt_rsrc(fields):
-    if 'rsrc' in fields:
-        r = fields['rsrc']
+    if fields[1] is not None:
+        r = fields[1]
         if 0 <= r and r < 4:
             return smt_rnames[r]
         elif 4 <= r and r < 16:
@@ -235,8 +271,8 @@ def smt_rsrc(fields):
         return smt_rnames[-1]
 
 def smt_rdst(fields):
-    if 'rdst' in fields:
-        r = fields['rdst']
+    if fields[2] is not None:
+        r = fields[2]
         if 0 <= r and r < 4:
             return smt_rnames[r]
         elif 4 <= r and r < 16:
@@ -265,7 +301,7 @@ def mk_add_constraint_individual(predicates, pred_blocks, z3_data):
         p = z3.Bool(ident)
         times = []
         for fields in block:
-            ins = isa.decode(fields['words'][0])
+            ins = isa.decode(fields[0])
             iname = smt_iname(ins)
             times.append(time_fn(inst_dt.__dict__[iname]))
         s.add(z3.Implies(p, z3.Sum(times) == cycles))
@@ -280,7 +316,7 @@ def mk_add_constraint_instr(ipreds, blacklist, z3_data):
         preds = set()
         times = []
         for fields in block:
-            ins = isa.decode(fields['words'][0])
+            ins = isa.decode(fields[0])
             iname = smt_iname(ins)
             times.append(time_fn(inst_dt.__dict__[iname]))
             if blacklist is None or not blacklist(ins, fields):
@@ -289,7 +325,7 @@ def mk_add_constraint_instr(ipreds, blacklist, z3_data):
     return add_constraint
 
 def round_1(blocks):
-    cx_max = 5
+    cx_max = 100
 
     print('SMT timing analysis round 1.')
 
@@ -308,7 +344,7 @@ def mk_add_constraint_individual_r(predicates, pred_blocks, z3_data):
         p = z3.Bool(ident)
         times = []
         for fields in block:
-            ins = isa.decode(fields['words'][0])
+            ins = isa.decode(fields[0])
             times.append(time_fn(ins, fields))
         s.add(z3.Implies(p, z3.Sum(times) == cycles))
         predicates.append(p)
@@ -322,7 +358,7 @@ def mk_add_constraint_instr_r(ipreds, blacklist, z3_data):
         preds = set()
         times = []
         for fields in block:
-            ins = isa.decode(fields['words'][0])
+            ins = isa.decode(fields[0])
             times.append(time_fn(ins, fields))
             if blacklist is None or not blacklist(ins, fields):
                 preds.add(ipreds[ins])
@@ -465,7 +501,7 @@ def mk_add_constraint_individual_prev(predicates, pred_blocks, z3_data):
         times = []
         prev_ins = None
         for fields in block:
-            ins = isa.decode(fields['words'][0])
+            ins = isa.decode(fields[0])
             times.append(time_fn(ins, fields, prev_ins))
             prev_ins = ins
         s.add(z3.Implies(p, z3.Sum(times) == cycles))
@@ -481,7 +517,7 @@ def mk_add_constraint_instr_prev(ipreds, blacklist, z3_data):
         times = []
         prev_ins = None
         for fields in block:
-            ins = isa.decode(fields['words'][0])
+            ins = isa.decode(fields[0])
             times.append(time_fn(ins, fields, prev_ins))
             prev_ins = ins
             if blacklist is None or not blacklist(ins, fields):
@@ -541,7 +577,7 @@ def mk_add_constraint_individual_state(predicates, pred_blocks, z3_data):
         times = []
         z3_state = state_init()
         for fields in block:
-            ins = isa.decode(fields['words'][0])
+            ins = isa.decode(fields[0])
             times.append(time_fn(ins, fields, z3_state))
             z3_state = state_fn(ins, fields, z3_state)
         s.add(z3.Implies(p, z3.Sum(times) == cycles))
@@ -557,7 +593,7 @@ def mk_add_constraint_instr_state(ipreds, blacklist, z3_data):
         times = []
         z3_state = state_init()
         for fields in block:
-            ins = isa.decode(fields['words'][0])
+            ins = isa.decode(fields[0])
             times.append(time_fn(ins, fields, z3_state))
             z3_state = state_fn(ins, fields, z3_state)
             if blacklist is None or not blacklist(ins, fields):
@@ -858,6 +894,9 @@ def create_model_table_8(solver, z3_data, pname):
             if ins.smode in {'#1'} and rname in {smt_rnames[0], smt_rnames[2]}:
                 invmode += 1
                 ttab[(state, iname, None, rname)] = None
+            elif ins.dmode in {'Rn'} and rname in {smt_rnames[0]} and ins.name not in {'MOV'}:
+                invmode += 1
+                ttab[(state, iname, None, rname)] = None
             else:
                 print('using else {:d} for {:s}'.format(rdst_else, repr((state, iname, rname))))
                 ttab[(state, iname, None, rname)] = rdst_else
@@ -904,6 +943,9 @@ def create_model_table_8(solver, z3_data, pname):
                   and rdname in {smt_rnames[0], smt_rnames[2]}):
                 invmode += 1
                 ttab[(state, iname, rsname, rdname)] = None
+            elif ins.dmode in {'Rn'} and rdname in {smt_rnames[0]} and ins.name not in {'MOV'}:
+                invmode += 1
+                ttab[(state, iname, None, rname)] = None
             else:
                 print('using else {:d} for {:s}'.format(rsrc_rdst_else, repr((state, iname, rsname, rdname))))
                 ttab[(state, iname, rsname, rdname)] = rsrc_rdst_else

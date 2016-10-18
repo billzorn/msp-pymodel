@@ -495,10 +495,10 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             if name in {'MOV'}:
                 if rdst == 0:
                     sval = ('LABEL', testname + '_POST')
+                    generate_post_label = True
                 else:
                     sval = 0
                 require_source_data = True
-                generate_post_label = True
             # otherwise pick a source value that will preserve the value in the register
             # after the operation
             elif assem.modifies_destination(name):
@@ -527,15 +527,24 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             daddr = known_daddr
         # if we will change rdst due to rsrc==rdst ai, then use the modified address
         daddr_post_ai = (daddr + ai_dst_offset) & -2
-        if info.check_or_set_use(daddr_post_ai, validator_if_needed(False, dval), dval) is False:
-            setup.append(('MOV', '#N', '&ADDR', {'isrc':dval, 'idst':daddr_post_ai, 'bw':0}))
+        if valid_writable_address(daddr_post_ai):
+            if info.check_or_set_use(daddr_post_ai,
+                                     validator_if_needed(False, dval), 
+                                     dval) is False:
+                setup.append(('MOV', '#N', '&ADDR', {'isrc':dval, 'idst':daddr_post_ai, 'bw':0}))
+        else:
+            info.check_or_set_use(daddr_post_ai,
+                                  validator_if_needed(require_source_data, dval),
+                                  None)        
     elif dmode in {'ADDR'}:
         dimm = ('PC_ABS', daddr)
         if info.check_or_set_use(daddr, validator_if_needed(False, dval), dval) is False:
+            assert valid_writable_address(daddr)
             setup.append(('MOV', '#N', '&ADDR', {'isrc':dval, 'idst':daddr, 'bw':0}))
     elif dmode in {'&ADDR'}:
         dimm = daddr
         if info.check_or_set_use(daddr, validator_if_needed(False, dval), dval) is False:
+            assert valid_writable_address(daddr)
             setup.append(('MOV', '#N', '&ADDR', {'isrc':dval, 'idst':daddr, 'bw':0}))
     elif dmode in {'none'}:
         pass
@@ -584,21 +593,28 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         else:
             # remember new address
             saddr = known_saddr
-        if info.check_or_set_use(saddr, 
-                                 validator_if_needed(require_source_data, sval), 
-                                 sval) is False:
-            setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+        if valid_writable_address(saddr):
+            if info.check_or_set_use(saddr,
+                                     validator_if_needed(require_source_data, sval), 
+                                     sval) is False:
+                setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+        else:
+            info.check_or_set_use(saddr,
+                                  validator_if_needed(require_source_data, sval),
+                                  None)
     elif smode in {'ADDR'}:
         simm = ('PC_ABS', saddr)
         if info.check_or_set_use(saddr, 
                                  validator_if_needed(require_source_data, sval), 
                                  sval) is False:
+            assert valid_writable_address(saddr)
             setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
     elif smode in {'&ADDR'}:
         simm = saddr
         if info.check_or_set_use(saddr, 
                                  validator_if_needed(require_source_data, sval), 
                                  sval) is False:
+            assert valid_writable_address(saddr)
             setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
     elif smode in {'@Rn', '@Rn+'}:
         assert rsrc not in {0}, 'invalid source mode: {:s} {:d}'.format(smode, rsrc)
@@ -618,10 +634,15 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                 # remember new address
                 saddr = known_saddr
             # set and record sval
-            if info.check_or_set_use(saddr,
-                                     validator_if_needed(require_source_data, sval),
-                                     sval) is False:
-                setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+            if valid_writable_address(saddr):
+                if info.check_or_set_use(saddr,
+                                         validator_if_needed(require_source_data, sval), 
+                                         sval) is False:
+                    setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+            else:
+                info.check_or_set_use(saddr,
+                                      validator_if_needed(require_source_data, sval),
+                                      None)
             # we need to do something here if we're autoincrementing
             if   ai_src_offset == 1:
                 # to support this we need to emit .b moves in setup code...
@@ -791,6 +812,15 @@ def emit_micro(addr, codes, measure=True):
         setup += local_setup
         bench += local_bench
 
+    # debug HACK
+    for x in setup + bench:
+        if isinstance(x, tuple):
+            name, smode, dmode, fields = x
+            if name == 'MOV' and dmode == '&ADDR' and not(valid_writable_address(fields['idst'])):
+                print(setup)
+                print(bench)
+                assert False
+
     if measure:
         info.add(uses={timer_r2:None}, clobbers=[timer_r2, 2])
         measure_post += emit_timer_read_rn(timer_r2)
@@ -925,16 +955,24 @@ def iter_states(codes_iterator, measure = True, verbosity = 0, metrics = None):
 if __name__ == '__main__':
     import sys
     import traceback
-    n = int(sys.argv[1])
 
+    codes = [('AND', 'Rn', 'Rn', 4, 2, 0),
+             ('MOV', '@Rn', 'Rn', 4, 2, 1)]
+
+    code = emit_micro(0, codes)
+    for x in code:
+        print(x)
+    exit(0)
+
+    n = int(sys.argv[1])
     good = 0
     bad = 0
     err = 0
 
     for codes in iter_reps(n):
-        if codes[0][0] not in {'CALL'}:
-            continue
-        print('-- {:s} --'.format(repr(codes)))
+        # if codes[0][0] not in {'CALL'}:
+        #     continue
+        # print('-- {:s} --'.format(repr(codes)))
         try:
             code = emit_micro(0, codes)
             for instr_data in code:

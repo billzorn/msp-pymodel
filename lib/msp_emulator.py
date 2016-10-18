@@ -161,7 +161,7 @@ class Emulator(object):
 
             # step_io = self.iotrace2[-1]
             # for addr, value in step_io['w']['mem']:
-            #     if addr >= 0x6000:
+            #     if addr >= 0xfffe:
             #         print(hex(pc))
             #         utils.print_dict(step_io)
             #         raise base.Breakpoint('manual')

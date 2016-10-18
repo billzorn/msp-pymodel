@@ -50,6 +50,9 @@ class Reginfo(object):
                                  .format(repr(pred), rn, repr(self.uses[rn])))
             return self.uses[rn]
         else:
+            if not pred(default):
+                raise ValueError('conflict: predicate {:s} failed for {:x}: {:s}'
+                                 .format(repr(pred), rn, repr(default)))
             self.uses[rn] = default
             return False
 
