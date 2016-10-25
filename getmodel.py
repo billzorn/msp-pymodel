@@ -69,8 +69,21 @@ def is_supported_instruction(ins, rsname, rdname):
             elif ins.smode in {'#1'} and rsname in {smt.smt_rnames[3]}:
                 return ins.name in {'CMP', 'BIT'}
             # PCSR
-            elif ins.smode in {'Rn'} and rsname in {smt.smt_rnames[0], smt.smt_rnames[2]}:
+            elif ins.smode in {'Rn'} and rsname in {smt.smt_rnames[0]}:
                 return ins.name in {'CMP', 'BIT'}
+
+            # elif ins.smode in {'Rn'} and rsname in {smt.smt_rnames[0], smt.smt_rnames[2]}:
+            #     return ins.name in {'CMP', 'BIT'}
+
+            # this disagrees with the tables I have of supported fmt1...
+            # what's happening is that we can measure some of these if we manage to set R2 to 0,
+            # because we then pick that up as a usable identity
+            elif ins.smode in {'Rn'} and rsname in {smt.smt_rnames[2]}:
+                if rdname in {smt.smt_rnames[0]}:
+                    return ins.name in {'CMP', 'BIT'}
+                elif rdname in {smt.smt_rnames[2]}:
+                    return ins.name not in {'AND', 'SUBC'}
+
             elif ins.smode in {'Rn'} and rsname in {smt.smt_rnames[3]}:
                 if rdname in {smt.smt_rnames[0]}:
                     return ins.name in {'CMP', 'BIT'}
@@ -90,7 +103,7 @@ def is_supported_instruction(ins, rsname, rdname):
                 return False
             elif ins.name in {'CALL'}:
                 if (ins.smode, rsname) not in {
-                        ('@Rn', smt.smt_rnames[4]),
+                        ('Rn', smt.smt_rnames[4]),
                         ('ADDR', smt.smt_rnames[0]),
                         ('&ADDR', smt.smt_rnames[2]),
                         ('X(Rn)', smt.smt_rnames[4]),
@@ -153,6 +166,7 @@ def create_model_table_10(record, fname):
     invr = 0
     invm = 0
     unsupported = 0
+    inf = 0
     other = 0
     for x in rsrc_rdst_pool:
         state, iname, rsname, rdname = x
@@ -186,10 +200,14 @@ def create_model_table_10(record, fname):
             # for s in states:
             #     if (s, iname, rsname, rdname) in ttab:
             #         print('  ', s, iname, rsname, rdname, ' : ', ttab[(s, iname, rsname, rdname)])                
-            other += 1
-            ttab[x] = None
-    print('excluded {:d} dadd, {:d} ext, {:d} X(R3), {:d} invalid register, {:d} invalid mode, {:d} unsupported, {:d} other'
-          .format(dadds, exts, xr3s, invr, invm, unsupported, other))
+            if (state_default, iname, rsname, rdname) in ttab:
+                inf += 1
+                ttab[x] = ttab[state_default, iname, rsname, rdname]
+            else:
+                other += 1
+                ttab[x] = None
+    print('excluded {:d} dadd, {:d} ext, {:d} X(R3), {:d} invalid register, {:d} invalid mode, {:d} unsupported, {:d} inferred, {:d} other'
+          .format(dadds, exts, xr3s, invr, invm, unsupported, inf, other))
 
     state_pool = set([(s, x, rs, rd)
                       for s in states
@@ -260,7 +278,7 @@ def create_model_table_10(record, fname):
                 stab[x] = state_default
             else:
                 other += 1
-                stab[x] = None
+                stab[x] = state_else
     print('excluded {:d} dadd, {:d} ext, {:d} X(R3), {:d} invalid register, {:d} invalid mode, {:d} unsupported, {:d} inferred to initial state, {:d} other'
           .format(dadds, exts, xr3s, invr, invm, unsupported, inf, other))
 
