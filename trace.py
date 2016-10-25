@@ -127,7 +127,7 @@ def trace_elf(elfname, jname, tty = None, logname = None, verbosity = 0):
 def retrace_elf(elfname, jname, tinfo, interesting_blocks, verbosity = 0):
     if not os.path.isfile(jname):
         print('skipping {:s}, no trace {:s}'.format(elfname, jname))
-        return False
+        return True
 
     timulator = Emulator(verbosity=verbosity, tracing=True, tinfo=tinfo)
     mulator = Emulator(verbosity=verbosity, tracing=True)
@@ -563,15 +563,16 @@ def main(args):
             smt_blocks += smt.compress_blocks(blocks)
 
             if   smtround == 1:
-                smt_blocks.reverse()
                 smt.round_1(smt_blocks)
             elif smtround == 2:
+                smt_blocks.reverse()
                 smt.round_2(smt_blocks)
             elif smtround == 3:
                 smt.round_3(smt_blocks)
             elif smtround == 4:
                 smt.round_4(smt_blocks)
             elif smtround == 5:
+                #smt_blocks.reverse()
                 smt.round_5(smt_blocks)
             elif smtround == 6:
                 smt.round_6(smt_blocks)
@@ -581,6 +582,9 @@ def main(args):
                 smt.round_8(smt_blocks)
             elif smtround == 9:
                 smt.round_9(smt_blocks)
+            elif smtround == 10:
+                smt.round_10(smt_blocks)
+
 
     if not did_work:
         print('Nothing to do.')

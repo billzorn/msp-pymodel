@@ -57,31 +57,43 @@ class Emulator(object):
         self.timer_state = self.timer_state_default
 
     def _timer_update(self, ins, fields):
-        cycles = None
+        # cycles = None
+        # iname = smt.smt_iname(ins)
+        # if (self.timer_state, iname, None, None) in self.timer_ttab:
+        #     assert cycles is None
+        #     cycles = self.timer_ttab[(self.timer_state, iname, None, None)]
+        #     assert cycles is not None
+        # rsname = smt.smt_rsrc(fields)
+        # if (self.timer_state, iname, rsname, None) in self.timer_ttab:
+        #     assert cycles is None
+        #     cycles = self.timer_ttab[(self.timer_state, iname, rsname, None)]
+        #     assert cycles is not None
+        # rdname = smt.smt_rdst(fields)
+        # if (self.timer_state, iname, None, rdname) in self.timer_ttab:
+        #     assert cycles is None
+        #     cycles = self.timer_ttab[(self.timer_state, iname, None, rdname)]
+        #     assert cycles is not None
+        # if (self.timer_state, iname, rsname, rdname) in self.timer_ttab:
+        #     assert cycles is None
+        #     cycles = self.timer_ttab[(self.timer_state, iname, rsname, rdname)]
+        #     assert cycles is not None
+        # assert cycles is not None and cycles >= 0
+        # self.timer_state = self.timer_stab[self.timer_state, iname]
         iname = smt.smt_iname(ins)
-        if (self.timer_state, iname, None, None) in self.timer_ttab:
-            assert cycles is None
-            cycles = self.timer_ttab[(self.timer_state, iname, None, None)]
-            assert cycles is not None
-        rsname = smt.smt_rsrc(fields)
-        if (self.timer_state, iname, rsname, None) in self.timer_ttab:
-            assert cycles is None
-            cycles = self.timer_ttab[(self.timer_state, iname, rsname, None)]
-            assert cycles is not None
-        rdname = smt.smt_rdst(fields)
-        if (self.timer_state, iname, None, rdname) in self.timer_ttab:
-            assert cycles is None
-            cycles = self.timer_ttab[(self.timer_state, iname, None, rdname)]
-            assert cycles is not None
-        if (self.timer_state, iname, rsname, rdname) in self.timer_ttab:
-            assert cycles is None
-            cycles = self.timer_ttab[(self.timer_state, iname, rsname, rdname)]
-            assert cycles is not None
-        assert cycles is not None and cycles >= 0
-        self.timer_state = self.timer_stab[self.timer_state, iname]
+        rsname = smt.ext_smt_rsrc(fields)
+        rdname = smt.ext_smt_rdst(fields)
+        cycles = self.timer_ttab[self.timer_state, iname, rsname, rdname]
+        if cycles is None:
+            raise base.UnknownBehavior('missing timer entry for {:d} {:s} {:s} {:s}'
+                                       .format(self.timer_state, iname, rsname, rdname))
+        new_state = self.timer_stab[self.timer_state, iname, rsname, rdname]
+        if new_state is None:
+            raise base.UnknownBehavior('missing timer state transition for {:d} {:s} {:s} {:s}'
+                                       .format(self.timer_state, iname, rsname, rdname))
+        self.timer_state = new_state
         self.timer_cycles = self.timer_cycles + cycles
         return cycles
-    
+
     def reset(self):
         reset_pc = model.mk_read16(self.state.read8)(model.resetvec)
         self.state.writereg(0, reset_pc)
