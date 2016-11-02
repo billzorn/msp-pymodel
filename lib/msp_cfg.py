@@ -132,12 +132,41 @@ class CFG(object):
                   .format(pc, callsite, pc_pred))
         print('')
 
+    def get_seqs(self, length):
+        btab = self.block_table.copy()
+        ctab = self.call_table.copy()
+        
+        def _get_suffix(block, current, remaining):
+            assert remaining >= 1
+            if remaining == 1:
+                output = [[block.instrs[current]]]
+            elif current < len(block.instrs)-1:
+                # print([x for x in _get_suffix(block, current+1, remaining-1)])
+                # print([block.instrs[current]])
+                output = [[block.instrs[current]] + x for x in _get_suffix(block, current+1, remaining-1)]
+            else:
+                # print([x for addr in block.succs for x in _get_suffix(btab[addr], 0, remaining-1)])
+                assert current == len(block.instrs)-1
+                if block.succs:
+                    succs = block.succs
+                else:
+                    # assume return
+                    succs = [addr for cs in block.callsites for addr in ctab[cs].return_targets]
+                output = [[block.instrs[current]] + x for addr in succs for x in _get_suffix(btab[addr], 0, remaining-1)]
+            return output
+
+        return [_get_suffix(b, i, length)
+                for b in btab.values()
+                for i in range(len(b.instrs))]
+
     def build_graph(self, do_quadratic_checks = False):
         # find entry point
         entrypoint = self.read16(model.resetvec)
         entrysite = CallSite(entrypoint, self.verbosity)
 
         # tables of observed call sites and blocks
+        # TODO: will need multiple initial entries to support more than the boring set of
+        # interrupt vectors
         call_table = {entrypoint : entrysite}
         block_table = {}
 
@@ -146,7 +175,11 @@ class CFG(object):
         byte_table = {}
 
         # set of pc values to consider next
-        workset = { (entrypoint, entrypoint, model.resetvec) }
+        # we could come in through any interrupt vector...
+        workset = { (self.read16(ivec), self.read16(ivec), ivec)
+                    for ivec in range(model.ivec_start, model.ivec_start+model.ivec_count*2,2) 
+                    # hack for uninitialized vectors that don't make sense
+                    if self.read16(ivec) != 0xffff }
         def update_workset(pc, callsite, pc_pred):
             if pc not in block_table or callsite not in block_table[pc].callsites:
                 if self.verbosity >= 3:
@@ -293,7 +326,7 @@ class CFG(object):
                         assert split_addr == prev_addr, 'byte splitting {:05x}, saw {:05x}'.format(split_addr, prev_addr)
                     byte_table[b] = current_block.addr
                 
-                current_block.instrs.append(ins)
+                current_block.instrs.append((ins, fields))
                 
                 if ins.fmt in {'jump'}:
                     offset = fields['jump_offset']
@@ -374,8 +407,13 @@ class CFG(object):
         if self.verbosity >= 1:
             print('processed workset, {:d} callsites, {:d} blocks'.format(len(call_table), len(block_table)))
             print('covered {:d} instructions, {:d} bytes'.format(len(ins_table), len(byte_table)))
+        if self.verbosity >= 3:
             self._describe(call_table, block_table, entrypoint)
 
+        self.call_table = call_table
+        self.block_table = block_table
+        # TODO: support multiple vectors
+        self.entrypoint = entrypoint
 
     def check_instrs(self):
         pc = self.read16(model.resetvec)
@@ -398,3 +436,10 @@ if __name__ == '__main__':
     cfg = CFG(fname, verbosity=1)
     
     cfg.build_graph(do_quadratic_checks=True)
+
+    seqs = cfg.get_seqs(12)
+    print(len(seqs))
+    # for s in seqs:
+    #     print(len(s))
+    #     for ins, fields in s:
+    #         print('  ', ins.name)
