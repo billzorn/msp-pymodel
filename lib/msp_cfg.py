@@ -168,6 +168,10 @@ class CFG(object):
         # TODO: will need multiple initial entries to support more than the boring set of
         # interrupt vectors
         call_table = {entrypoint : entrysite}
+        call_table = { self.read16(ivec) : CallSite(self.read16(ivec), self.verbosity)
+                       # hack for uninitialized vectors that don't make sense
+                       for ivec in range(model.ivec_start, model.ivec_start+model.ivec_count*2,2)
+                       if self.read16(ivec) != 0xffff }
         block_table = {}
 
         # tables of covered instructions and memory sites

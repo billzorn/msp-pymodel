@@ -1,3 +1,5 @@
+import traceback
+
 import utils
 import msp_assem as assem
 import msp_itable as itab
@@ -281,13 +283,21 @@ def valid_writable_address(addr):
     return (isinstance(addr, int) 
             and (model.ram_start <= addr and addr < model.ram_start + model.ram_size))
 
+def valid_sr_bits(i):
+    return i & ((~271) & 0xfffff) == 0
+
 def validator_if_needed(needed, x):
-    if needed:
+    if needed is True or needed == 'pc':
         def validate(y):
             return y == x
-    else:
+    elif needed == 'sr':
+        return valid_sr_bits
+    elif needed is False or needed is None:
         def validate(y):
             return True
+    else:
+        print(needed)
+        assert False
     return validate
 
 # Helpers to provide safe source values for PC/SR operations.
@@ -419,7 +429,7 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
     # but that shouldn't be a problem.
 
     # flags to indicate whether exact data is needed
-    require_source_data = False
+    require_source_data = None
     generate_post_label = False
 
     # autoincrement mode might change the value in the source register, even when it's
@@ -449,7 +459,7 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
     if name in {'CALL'}:
         assert not require_source_data
         sval = ('LABEL', testname + '_POST')
-        require_source_data = True
+        require_source_data = 'pc'
         generate_post_label = True
     if name in {'RETI'}:
         # this seems to be the standard encoding
@@ -496,15 +506,18 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                 if rdst == 0:
                     sval = ('LABEL', testname + '_POST')
                     generate_post_label = True
+                    require_source_data = 'pc'
                 else:
                     sval = 0
-                require_source_data = True
+                    require_source_data = 'sr'
             # otherwise pick a source value that will preserve the value in the register
             # after the operation
             elif assem.modifies_destination(name):
+                # assume not a PC operation
+                assert rdst != 0
                 sval = get_fmt1_identity(name)
                 assert sval is not None
-                require_source_data = True
+                require_source_data = 'sr'
         elif rdst in {3}:
             # don't bother trying to set r3; do we need any kind of check here?
             pass
@@ -701,8 +714,12 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             elif assem.modifies_destination(name):
                 # this isn't really used for the PC nowadays anyway...
                 if not is_fmt1_identity(name, sval):
-                    raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
-                                     .format(repr(sval), name, actual_dmode, actual_rdst))
+                    # clever hack because BIS and BIC can't cause a carry
+                    if actual_rdst in {2} and name in {'BIS', 'BIC'} and valid_sr_bits(sval):
+                        assert actual_rdst == 2
+                    else:
+                        raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
+                                         .format(repr(sval), name, actual_dmode, actual_rdst))
                 # If we're carry dependent, also need to look at the value in the SR.
                 if name in {'ADDC', 'SUBC'}:
                     if info.check_or_set_use(2, 
@@ -813,13 +830,13 @@ def emit_micro(addr, codes, measure=True):
         bench += local_bench
 
     # debug HACK
-    for x in setup + bench:
-        if isinstance(x, tuple):
-            name, smode, dmode, fields = x
-            if name == 'MOV' and dmode == '&ADDR' and not(valid_writable_address(fields['idst'])):
-                print(setup)
-                print(bench)
-                assert False
+    # for x in setup + bench:
+    #     if isinstance(x, tuple):
+    #         name, smode, dmode, fields = x
+    #         if name == 'MOV' and dmode == '&ADDR' and not(valid_writable_address(fields['idst'])):
+    #             print(setup)
+    #             print(bench)
+    #             assert False
 
     if measure:
         info.add(uses={timer_r2:None}, clobbers=[timer_r2, 2])
@@ -862,17 +879,19 @@ def iter_states(codes_iterator, measure = True, verbosity = 0, metrics = None):
             if verbosity >= 1:
                 if str(e).startswith('condition'):
                     condition_failures += 1
+                    #traceback.print_exc()
                 elif str(e).startswith('conflict'):
                     conflict_failures += 1
+                    #traceback.print_exc()
                 else:
                     if verbosity >= 2:
-                        print(e)
+                        traceback.print_exc()
                     other_failures += 1
             continue
         except Exception as e:
             if verbosity >= 1:
                 if verbosity >= 2:
-                    print(2)
+                    traceback.print_exc()
                 other_failures += 1
             continue
 

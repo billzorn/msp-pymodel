@@ -106,7 +106,7 @@ def mk_writefields_dst_Rn(ins):
             #                                .format(fields['pc'], fields['dst']))
         # and for writes to unmodeled SR bits
         elif fields['rdst'] == 2:
-            if fields['dst'] & ((~263) & 0xfffff) != 0:
+            if fields['dst'] & ((~271) & 0xfffff) != 0:
                 raise base.UnknownBehavior('fmt1 invalid SR write: {:05x}'.format(fields['dst']))
         state.writereg(0, fields['pc'])
         state.writereg(fields['rdst'], fields['dst'])

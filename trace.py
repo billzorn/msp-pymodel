@@ -167,7 +167,7 @@ def retrace_elf(elfname, jname, tinfo, interesting_blocks, verbosity = 0):
             print('    failures in both traces: {:s}'.format(elfname))
         elif old_err:
             print('    BAD: failures in hardware trace: {:s}'.format(elfname))
-        elif old_err:
+        elif err:
             print('    BAD: failures in emulator trace: {:s}'.format(elfname))
         else:
             print('    successful trace: {:s}'.format(elfname))
@@ -183,6 +183,37 @@ def retrace_elf(elfname, jname, tinfo, interesting_blocks, verbosity = 0):
                     trace_errors += 1
                 elif difference != old_difference:
                     interesting_blocks.append((addr, old_block, old_difference))
+                    if verbosity >= 0:
+                        print('timing difference for block at {:05x} of {:s}'.format(addr, elfname))
+                        for fields in block:
+                            ins = isa.decode(fields['words'][0])
+                            fmt, name, smode, dmode = isa.instr_to_modes(ins)
+                            if   fmt == 'fmt1':
+                                rsrc = fields['rsrc']
+                                rdst = fields['rdst']
+                                if 'isrc' in fields:
+                                    sval = ', {:#x}'.format(fields['isrc'])
+                                else:
+                                    sval = ''
+                                print('{:s}\t{:s} (R{:d}{:s}), {:s} (R{:d})'
+                                      .format(name, smode, rsrc, sval, dmode, rdst))
+                            elif fmt == 'fmt2':
+                                rsrc = fields['rsrc']
+                                if 'isrc' in fields:
+                                    sval = ', {:#x}'.format(fields['isrc'])
+                                else:
+                                    sval = ''
+                                print('{:s}\t{:s} (R{:d}{:s})'
+                                      .format(name, smode, rsrc, sval))
+                            elif fmt == 'jump':
+                                print('{:s}\t{:d}, taken={:s}'
+                                      .format(name, fields['jump_offset'], str(fields['jump_taken'])))
+                            else:
+                                print('{:s}, {:s}, {:s}, {:s}'.format(fmt, name, smode, dmode))
+                                utils.print_dict(fields)
+                        print('hardware: {:s}, emulator: {:s}'
+                              .format(repr(old_difference), repr(difference)))
+                        print('')
             else:
                 uncovered += 1
 

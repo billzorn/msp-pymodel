@@ -3,12 +3,16 @@
 import sys
 import os
 
+import random
+random.seed(773)
+
 libdir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib')
 sys.path.append(libdir)
 
 import msp_micros as micros
 import msp_elftools as elftools
 import utils
+import msp_cfg as cfg
 
 
 def iter_states_and_write(args):
@@ -23,14 +27,64 @@ def iter_states_and_write(args):
         print('generated {:d} benchmark images'.format(i))
     return i, metrics[0]
 
+def get_seqs_from_image(fname, i, reset_reg = False):
+    graph = cfg.CFG(fname, verbosity=1)
+    graph.build_graph(do_quadratic_checks=True)
+    seqs = graph.get_seqs(i)
+
+    for list_of_seqs in seqs:
+        for seq in list_of_seqs:
+            free_reg = {4,5,6,7,8,9,10,11,12,13}
+            if not reset_reg:
+                for ins, fields in seq:
+                    if 'rsrc' in fields and fields['rsrc'] in free_reg:
+                        free_reg.remove(fields['rsrc'])
+                    if 'rdst' in fields and fields['rdst'] in free_reg:
+                        free_reg.remove(fields['rdst'])
+            microseqs = [[]]
+            for ins, fields in seq:
+                if (ins.fmt in {'jump'} or 'jump_taken' in fields) and ins.name not in {'JMP'}:
+                    new_microseqs = []
+                    fields['jump_taken'] = True
+                    for microseq in microseqs:
+                        microseq.append(micros.micro_description(ins, fields))
+                        new_microseqs.append(microseq + [micros.micro_description(ins, fields)])
+                    fields['jump_taken'] = False
+                    for microseq in microseqs:
+                        microseq.append(micros.micro_description(ins, fields))
+                        new_microseqs.append(microseq + [micros.micro_description(ins, fields)])
+                    microseqs += new_microseqs
+                else:
+                    if ins.name in {'JMP'}:
+                        fields['jump_taken'] = True
+                    if 'rsrc' in fields and fields['rsrc'] > 3 and (reset_reg or fields['rsrc'] > 13):
+                        if free_reg:
+                            fields['rsrc'] = free_reg.pop()
+                        else:
+                            fields['rsrc'] = random.randint(4,13)
+                    if 'rdst' in fields and fields['rdst'] > 3 and (reset_reg or fields['rdst'] > 13):
+                        if free_reg:
+                            fields['rdst'] = free_reg.pop()
+                        else:
+                            fields['rdst'] = random.randint(4,13)
+
+                    for microseq in microseqs:
+                        microseq.append(micros.micro_description(ins, fields))
+            for microseq in microseqs:
+                yield microseq
+
 def main(args):
     testdir = args.testdir
     n = args.depth
     measure = args.measure
+    fname = args.fname
+    reset_reg = args.rr
     verbosity = args.verbose
     ncores = args.ncores
 
-    if args.iterator == 'offset':
+    if fname:
+        generator = get_seqs_from_image(fname, n, reset_reg=reset_reg)
+    elif args.iterator == 'offset':
         generator = micros.iter_offset(n)
     elif args.iterator == 'rep':
         generator = micros.iter_reps(n)
@@ -66,12 +120,16 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('testdir',
                         help='directory to create micros in')
-    parser.add_argument('iterator', choices=['std', 'offset', 'rep'],
+    parser.add_argument('iterator', choices=['std', 'offset', 'rep', 'val'],
                         help='iterator to generate micros from')
+    parser.add_argument('-f', '--fname',
+                        help='elf file to extract sequences from')
     parser.add_argument('-n', '--depth', type=int, default=1,
                         help='depth to iterate to')
     parser.add_argument('-m', '--measure', action='store_true',
                         help='actually put timing measurement code in the micros')
+    parser.add_argument('-rr', action='store_true',
+                        help='reassign registers to avoid conflicts in benchmarks')
     parser.add_argument('-v', '--verbose', type=int, default=1,
                         help='verbosity level')
     parser.add_argument('-ncores', type=int, default=1,
