@@ -83,10 +83,26 @@ class Emulator(object):
         rsname = smt.ext_smt_rsrc(fields)
         rdname = smt.ext_smt_rdst(fields)
         cycles = self.timer_ttab[self.timer_state, iname, rsname, rdname]
+
+        if cycles is None and (ins.name in {'BIC', 'BIS'} and
+                               ins.smode in {'@Rn', '@Rn+'} and
+                               ins.dmode in {'Rn'} and
+                               rsname in {smt.smt_rnames[2], smt.smt_rnames[3]} and
+                               rdname in {smt.smt_rnames[2]}):
+            cycles = 1
+
         if cycles is None:
             raise base.UnknownBehavior('missing timer entry for {:d} {:s} {:s} {:s}'
                                        .format(self.timer_state, iname, rsname, rdname))
         new_state = self.timer_stab[self.timer_state, iname, rsname, rdname]
+
+        if new_state is None and (ins.name in {'BIC', 'BIS'} and
+                               ins.smode in {'@Rn', '@Rn+'} and
+                               ins.dmode in {'Rn'} and
+                               rsname in {smt.smt_rnames[2], smt.smt_rnames[3]} and
+                               rdname in {smt.smt_rnames[2]}):
+            new_state = 0
+
         if new_state is None:
             raise base.UnknownBehavior('missing timer state transition for {:d} {:s} {:s} {:s}'
                                        .format(self.timer_state, iname, rsname, rdname))
