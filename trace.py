@@ -526,8 +526,11 @@ def main(args):
     did_work = False
 
     if tinfo_name:
-        with open(tinfo_name, 'rb') as f:
-            tinfo = pickle.load(f)
+        if tinfo_name == 'reference':
+            tinfo = 'reference'
+        else:
+            with open(tinfo_name, 'rb') as f:
+                tinfo = pickle.load(f)
     else:
         tinfo = None
         

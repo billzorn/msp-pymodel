@@ -75,8 +75,15 @@ class CFG(object):
         self.read16 = model.mk_read16(self.state.read8)
 
         # TODO: alternative to readfields that doesn't always crash?
-        for addr in range(4096):
-            self.state.mmio_handle_default(addr)
+        for addr in range(0, model.ram_start, 2):
+            self.state.mmio_handle_default(addr, initial_value = 0xff)
+            self.state.mmio_handle_default(addr+1, initial_value = 0x3f)
+        for addr in range(model.ram_start+model.ram_size, model.fram_start, 2):
+            self.state.mmio_handle_default(addr, initial_value = 0xff)
+            self.state.mmio_handle_default(addr+1, initial_value = 0x3f)
+        for addr in range(model.fram_start+model.fram_size, model.fram_start+model.fram_size+16, 2):
+            self.state.mmio_handle_default(addr, initial_value = 0xff)
+            self.state.mmio_handle_default(addr+1, initial_value = 0x3f)
 
         if self.verbosity >= 1:
             print('loading {:s}'.format(fname))
@@ -93,7 +100,7 @@ class CFG(object):
                 print('REMAINING: {:d} sites, {:d} basic blocks\n'
                       .format(len(ct_clone), len(bt_clone)))
                 first = sorted(ct_clone.keys())[0]
-                self._describe_call(ct_clone, bt_clont, first)
+                self._describe_call(ct_clone, bt_clone, first)
             while bt_clone:
                 print('REMAINING: {:d} sites, {:d} basic blocks\n'
                       .format(len(ct_clone), len(bt_clone)))
@@ -391,6 +398,10 @@ class CFG(object):
                         if self.verbosity >= 0:
                             print('indirect branch at {:05x}, unsupported'.format(pc))
                     in_block = False
+                
+                # reti behaves the same as return
+                elif ins.name in {'RETI'}:
+                    in_block = False
 
                 # look at next instruction in block
                 else:
@@ -411,6 +422,20 @@ class CFG(object):
         if self.verbosity >= 1:
             print('processed workset, {:d} callsites, {:d} blocks'.format(len(call_table), len(block_table)))
             print('covered {:d} instructions, {:d} bytes'.format(len(ins_table), len(byte_table)))
+            range_start = None
+            prev = None
+        if self.verbosity >= 2:
+            for k in sorted(byte_table):
+                if range_start is None:
+                    range_start = k
+                    prev = k
+                elif k == prev + 1:
+                    prev = k
+                else:
+                    print('  {:05x} - {:05x}'.format(range_start, prev))
+                    range_start = k
+                    prev = k
+            print('  {:05x} - {:05x}'.format(range_start, prev))
         if self.verbosity >= 3:
             self._describe(call_table, block_table, entrypoint)
 

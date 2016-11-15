@@ -149,11 +149,13 @@ class Model(object):
         self.write8 = mk_write8(self.ram, self.fram, self.mmio_write, trace=trace)
 
     def set_mmio_read_handler(self, addr, handler):
-        assert isinstance(addr, int) and 0 <= addr and addr < ram_start
+        assert (isinstance(addr, int) and not ((ram_start <= addr and addr < ram_start+ram_size)
+                                               or (fram_start <= addr and addr < fram_start+fram_size)))
         self.mmio_read[addr] = handler
 
     def set_mmio_write_handler(self, addr, handler):
-        assert isinstance(addr, int) and 0 <= addr and addr < ram_start
+        assert (isinstance(addr, int) and not ((ram_start <= addr and addr < ram_start+ram_size)
+                                               or (fram_start <= addr and addr < fram_start+fram_size)))
         self.mmio_write[addr] = handler
 
     def mmio_handle_default(self, addr, initial_value = 0):

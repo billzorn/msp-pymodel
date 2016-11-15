@@ -65,9 +65,9 @@ def is_supported_instruction(ins, rsname, rdname):
         elif ins.dmode in {'Rn'} and rdname in {smt.smt_rnames[0], smt.smt_rnames[2]}:
             # constant generator
             if ins.smode in {'@Rn', '@Rn+'} and rsname in {smt.smt_rnames[2], smt.smt_rnames[3]}:
-                return ins.name in {'CMP', 'BIT'}
+                return ins.name in {'CMP', 'BIT'} or (rdname in {smt.smt_rnames[2]} and ins.name in {'MOV', 'BIC', 'BIS'})
             elif ins.smode in {'#1'} and rsname in {smt.smt_rnames[3]}:
-                return ins.name in {'CMP', 'BIT'}
+                return ins.name in {'CMP', 'BIT'} or (rdname in {smt.smt_rnames[2]} and ins.name in {'MOV', 'BIC', 'BIS'})
             # PCSR
             elif ins.smode in {'Rn'} and rsname in {smt.smt_rnames[0]}:
                 return ins.name in {'CMP', 'BIT'}
@@ -137,7 +137,8 @@ def create_model_table_10(record, fname):
     state_strings = record['state_fn_default']
 
     inames = {smt.smt_iname(ins) : ins for ins in isa.ids_ins}
-    states = [0, 1, 2, 3]
+    states = [0, 1]
+    #states = [0, 1, 2, 3]
     state_default = smt.get_state_id(state0_strings)
 
     rsrc_rdst_pool = set([(s, x, rs, rd)
@@ -203,7 +204,12 @@ def create_model_table_10(record, fname):
             if (state_default, iname, rsname, rdname) in ttab:
                 inf += 1
                 ttab[x] = ttab[state_default, iname, rsname, rdname]
+            elif rsname in {smt.smt_rnames[2]} and (state, iname, smt.smt_rnames[4], rdname) in ttab:
+                print('assuming R4 behavior for R2 source:')
+                print('  ', state, ins.name, ins.smode, rsname, ins.dmode, rdname)
+                ttab[x] = ttab[(state, iname, smt.smt_rnames[4], rdname)]
             else:
+                print(state, ins.name, ins.smode, rsname, ins.dmode, rdname)
                 other += 1
                 ttab[x] = None
     print('excluded {:d} dadd, {:d} ext, {:d} X(R3), {:d} invalid register, {:d} invalid mode, {:d} unsupported, {:d} inferred, {:d} other'
@@ -292,4 +298,6 @@ def create_model_table_10(record, fname):
 
 if __name__ == '__main__':
     fname = sys.argv[1]
-    create_model_table_10(historical_models.model_m9_s10, fname)
+    #create_model_table_10(historical_models.model_m9_s10, fname)
+    create_model_table_10(historical_models.model_m10_simple, fname)
+    #create_model_table_10(historical_models.model_m10_full, fname)

@@ -284,14 +284,16 @@ def valid_writable_address(addr):
             and (model.ram_start <= addr and addr < model.ram_start + model.ram_size))
 
 def valid_sr_bits(i):
-    return i & ((~271) & 0xfffff) == 0
+    return isinstance(i, int) and i & ((~271) & 0xfffff) == 0
 
 def validator_if_needed(needed, x):
     if needed is True or needed == 'pc':
         def validate(y):
             return y == x
     elif needed == 'sr':
-        return valid_sr_bits
+        def validate(y):
+            if y == x or valid_sr_bits(y):
+                return True
     elif needed is False or needed is None:
         def validate(y):
             return True
@@ -509,7 +511,10 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                     require_source_data = 'pc'
                 else:
                     sval = 0
-                    require_source_data = 'sr'
+                    if name in {'MOV','BIC','BIS','CMP','BIT'}:
+                        require_source_data = 'sr'
+                    else:
+                        require_source_data = 'pc'
             # otherwise pick a source value that will preserve the value in the register
             # after the operation
             elif assem.modifies_destination(name):
@@ -517,7 +522,10 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                 assert rdst != 0
                 sval = get_fmt1_identity(name)
                 assert sval is not None
-                require_source_data = 'sr'
+                if name in {'MOV','BIC','BIS','CMP','BIT'}:
+                    require_source_data = 'sr'
+                else:
+                    require_source_data = 'pc'
         elif rdst in {3}:
             # don't bother trying to set r3; do we need any kind of check here?
             pass
@@ -571,6 +579,8 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             if not validator_if_needed(require_source_data, sval)(None):
                 raise ValueError('condition: PC holds wrong value for {:s} {:s} R{:d}'
                                  .format(name, smode, rsrc))
+            else:
+                sval = None
         # we might be able to control the SR value, currently not well supported though
         elif rsrc in {2}:
             v = info.conflict(2)
@@ -579,20 +589,25 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             if not validator_if_needed(require_source_data, sval)(v):
                 raise ValueError('condition: SR holds wrong value for {:s} {:s} R{:d}'
                                  .format(name, smode, rsrc))
+            else:
+                sval = v
         elif assem.has_cg(smode, rsrc) or assem.has_cg(smode, rsrc) == 0:
             cg_value = assem.has_cg(smode, rsrc)
             if not validator_if_needed(require_source_data, sval)(cg_value):
                 raise ValueError('condition: CG provides wrong value for {:s} {:s} R{:d}'
                                  .format(name, smode, rsrc))
+            else:
+                sval = cg_value
         else:
-            if info.check_or_set_use(rsrc, 
-                                     validator_if_needed(require_source_data, sval), 
-                                     sval) is False:
-                # We look at the current value, and if it needs to be something specific and already
-                # isn't, we fail. Otherwise if it wasn't set, we set it.
+            known_sval = info.check_or_set_use(rsrc, 
+                                               validator_if_needed(require_source_data, sval), 
+                                               sval)
+            if known_sval is False:
                 setup.append(('MOV', '#N', 'Rn', {'isrc':sval, 'rdst':rsrc, 'bw':0}))
-                # should never try to set r3 due to the constant generator check
-                assert rsrc != 3, 'really?'
+            else:
+                sval = known_sval
+            assert rsrc != 3, 'really?'
+
     elif smode in {'X(Rn)'}:
         assert rsrc not in {0, 2, 3}, 'invalid source mode: {:s} {:d}'.format(smode, rsrc)
         if name in {'PUSH', 'CALL'} and rsrc in {1}:
@@ -606,29 +621,39 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
         else:
             # remember new address
             saddr = known_saddr
-        if valid_writable_address(saddr):
-            if info.check_or_set_use(saddr,
-                                     validator_if_needed(require_source_data, sval), 
-                                     sval) is False:
-                setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+
+        check_sval = sval if valid_writable_address(saddr) else None
+        known_sval = info.check_or_set_use(saddr,
+                                           validator_if_needed(require_source_data, sval), 
+                                           check_sval)
+        if known_sval is False and valid_writable_address(saddr):
+            setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
         else:
-            info.check_or_set_use(saddr,
-                                  validator_if_needed(require_source_data, sval),
-                                  None)
+            sval = known_sval
+
     elif smode in {'ADDR'}:
         simm = ('PC_ABS', saddr)
-        if info.check_or_set_use(saddr, 
-                                 validator_if_needed(require_source_data, sval), 
-                                 sval) is False:
+        
+        known_sval = info.check_or_set_use(saddr, 
+                                           validator_if_needed(require_source_data, sval), 
+                                           sval)
+        if known_sval is False:
             assert valid_writable_address(saddr)
             setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+        else:
+            sval = known_sval
+
     elif smode in {'&ADDR'}:
         simm = saddr
-        if info.check_or_set_use(saddr, 
-                                 validator_if_needed(require_source_data, sval), 
-                                 sval) is False:
+        known_sval = info.check_or_set_use(saddr, 
+                                           validator_if_needed(require_source_data, sval), 
+                                           sval)
+        if known_sval is False:
             assert valid_writable_address(saddr)
             setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+        else:
+            sval = known_sval
+
     elif smode in {'@Rn', '@Rn+'}:
         assert rsrc not in {0}, 'invalid source mode: {:s} {:d}'.format(smode, rsrc)
         if name in {'PUSH', 'CALL'} and rsrc in {1}:
@@ -639,35 +664,41 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
             if not validator_if_needed(require_source_data, sval)(cg_value):
                 raise ValueError('condition: CG provides wrong value for {:s} {:s} R{:d}'
                                  .format(name, smode, rsrc))
+            else:
+                sval = cg_value
         else:
             known_saddr = info.check_or_set_use(rsrc, valid_readable_address, saddr)
             if known_saddr is False:
                 setup.append(('MOV', '#N', 'Rn', {'isrc':saddr, 'rdst':rsrc, 'bw':0}))
             else:
-                # remember new address
                 saddr = known_saddr
-            # set and record sval
-            if valid_writable_address(saddr):
-                if info.check_or_set_use(saddr,
-                                         validator_if_needed(require_source_data, sval), 
-                                         sval) is False:
-                    setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
+                
+            check_sval = sval if valid_writable_address(saddr) else None
+            known_sval = info.check_or_set_use(saddr,
+                                               validator_if_needed(require_source_data, sval), 
+                                               check_sval)
+            if known_sval is False and valid_writable_address(saddr):
+                setup.append(('MOV', '#N', '&ADDR', {'isrc':sval, 'idst':saddr, 'bw':0}))
             else:
-                info.check_or_set_use(saddr,
-                                      validator_if_needed(require_source_data, sval),
-                                      None)
+                sval = known_sval
+
             # we need to do something here if we're autoincrementing
             if   ai_src_offset == 1:
                 # to support this we need to emit .b moves in setup code...
                 info.overwrite_or_set_use(rsrc, None)
             elif ai_src_offset == 2:
                 info.overwrite_or_set_use(rsrc, saddr + ai_src_offset)
+
     elif smode in {'#@N', '#N'}:
         simm = sval
+
     elif smode in {'#1'}:
         if not validator_if_needed(require_source_data, sval)(1):
             raise ValueError('condition: CG provides wrong value for {:s} {:s} R{:d}'
                              .format(name, smode, rsrc))
+        else:
+            sval = 1
+
     else:
         assert False, 'unexpected smode? {:s} R{:d}'.format(smode, rsrc)
 
@@ -704,13 +735,12 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                     if not sval == ('LABEL', testname + '_POST'):
                         raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
                                          .format(repr(sval), name, actual_dmode, actual_rdst))
-                # could have a special check for valid SR values
                 else:
-                    if not sval == 0:
+                    if not valid_sr_bits(sval):
                         raise ValueError('condition: bad source value {:s} for {:s} {:s} R{:d}'
                                          .format(repr(sval), name, actual_dmode, actual_rdst))
                     else:
-                        info.overwrite_or_set_use(actual_rdst, 0)
+                        info.overwrite_or_set_use(actual_rdst, sval)
             elif assem.modifies_destination(name):
                 # this isn't really used for the PC nowadays anyway...
                 if not is_fmt1_identity(name, sval):
@@ -727,13 +757,22 @@ def prep_instruction(info, name, smode, dmode, rsrc, rdst, bw):
                                              0) is False:
                         setup.append(('MOV', 'Rn', 'Rn', {'rsrc':3, 'rdst':2, 'bw':0}))
                 # and if we are doing a byte operation on SR, we'll clear the high bits...
-                if actual_rdst in {2} and bw == 1:
+                if actual_rdst in {2}:
                     dval = info.conflict(actual_rdst)
-                    if isinstance(dval, int):
-                        info.overwrite_or_set_use(actual_rdst, dval & 0xff)
+
+                    if isinstance(sval, int) and isinstance(dval, int):
+                        if name in {'BIC'}:
+                            dval = (~sval) & dval
+                        elif name in {'BIS'}:
+                            dval = sval | dval
                     else:
-                        info.overwrite_or_set_use(actual_rdst, None)
-                
+                        dval = None
+
+                    if bw == 1 and isinstance(dval, int):
+                        dval = dval & 0xff
+
+                    info.overwrite_or_set_use(actual_rdst, dval)
+
         # Otherwise add destination register to clobbers since we're writing to it.
         # I think this is all we need to do.
         else:
@@ -882,7 +921,8 @@ def iter_states(codes_iterator, measure = True, verbosity = 0, metrics = None):
                     #traceback.print_exc()
                 elif str(e).startswith('conflict'):
                     conflict_failures += 1
-                    #traceback.print_exc()
+                    # print(codes)
+                    # traceback.print_exc()
                 else:
                     if verbosity >= 2:
                         traceback.print_exc()

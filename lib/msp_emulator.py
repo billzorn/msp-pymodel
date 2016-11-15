@@ -4,6 +4,7 @@ import utils
 import msp_base as base
 import msp_fr5969_model as model
 import msp_peripheral_timer as peripheral_timer
+import msp_reference_timing as reference_timing
 import msp_elftools as elftools
 import smt
 from msp_isa import isa
@@ -24,6 +25,13 @@ class Emulator(object):
         if tinfo is None:
             self.timing = False
             self._mmio_default()
+        elif tinfo == 'reference':
+            self.timing = True
+            self._timer_default()
+            self.timer_state_default = None
+            self.timer_ttab = []
+            self.timer_stab = []
+            self._timer_reset()
         else:
             self.timing = True
             self._timer_default()
@@ -79,33 +87,41 @@ class Emulator(object):
         #     assert cycles is not None
         # assert cycles is not None and cycles >= 0
         # self.timer_state = self.timer_stab[self.timer_state, iname]
-        iname = smt.smt_iname(ins)
-        rsname = smt.ext_smt_rsrc(fields)
-        rdname = smt.ext_smt_rdst(fields)
-        cycles = self.timer_ttab[self.timer_state, iname, rsname, rdname]
+        
+        if self.timer_ttab or self.timer_stab:
+            iname = smt.smt_iname(ins)
+            rsname = smt.ext_smt_rsrc(fields)
+            rdname = smt.ext_smt_rdst(fields)
 
-        if cycles is None and (ins.name in {'BIC', 'BIS'} and
-                               ins.smode in {'@Rn', '@Rn+'} and
-                               ins.dmode in {'Rn'} and
-                               rsname in {smt.smt_rnames[2], smt.smt_rnames[3]} and
-                               rdname in {smt.smt_rnames[2]}):
-            cycles = 1
+            cycles = self.timer_ttab[self.timer_state, iname, rsname, rdname]
 
-        if cycles is None:
-            raise base.UnknownBehavior('missing timer entry for {:d} {:s} {:s} {:s}'
-                                       .format(self.timer_state, iname, rsname, rdname))
-        new_state = self.timer_stab[self.timer_state, iname, rsname, rdname]
+            if cycles is None and (ins.name in {'BIC', 'BIS'} and
+                                   ins.smode in {'@Rn', '@Rn+'} and
+                                   ins.dmode in {'Rn'} and
+                                   rsname in {smt.smt_rnames[2], smt.smt_rnames[3]} and
+                                   rdname in {smt.smt_rnames[2]}):
+                cycles = 1
 
-        if new_state is None and (ins.name in {'BIC', 'BIS'} and
-                               ins.smode in {'@Rn', '@Rn+'} and
-                               ins.dmode in {'Rn'} and
-                               rsname in {smt.smt_rnames[2], smt.smt_rnames[3]} and
-                               rdname in {smt.smt_rnames[2]}):
-            new_state = 0
+            if cycles is None:
+                raise base.UnknownBehavior('missing timer entry for {:d} {:s} {:s} {:s}'
+                                           .format(self.timer_state, iname, rsname, rdname))
+            new_state = self.timer_stab[self.timer_state, iname, rsname, rdname]
 
-        if new_state is None:
-            raise base.UnknownBehavior('missing timer state transition for {:d} {:s} {:s} {:s}'
-                                       .format(self.timer_state, iname, rsname, rdname))
+            if new_state is None and (ins.name in {'BIC', 'BIS'} and
+                                   ins.smode in {'@Rn', '@Rn+'} and
+                                   ins.dmode in {'Rn'} and
+                                   rsname in {smt.smt_rnames[2], smt.smt_rnames[3]} and
+                                   rdname in {smt.smt_rnames[2]}):
+                new_state = 0
+
+            if new_state is None:
+                raise base.UnknownBehavior('missing timer state transition for {:d} {:s} {:s} {:s}'
+                                           .format(self.timer_state, iname, rsname, rdname))
+        else:
+            # use reference
+            cycles = reference_timing.reference_time(ins, fields)
+            new_state = self.timer_state_default
+
         self.timer_state = new_state
         self.timer_cycles = self.timer_cycles + cycles
         return cycles

@@ -238,8 +238,11 @@ if __name__ == '__main__':
             fname = os.path.join(scratch_dir, 'assembled.elf')
 
     if args.timing:
-        with open(args.timing, 'rb') as f:
-            tinfo = pickle.load(f)
+        if args.timing == 'reference':
+            tinfo = 'reference'
+        else:
+            with open(args.timing, 'rb') as f:
+                tinfo = pickle.load(f)
     else:
         tinfo = None
 
