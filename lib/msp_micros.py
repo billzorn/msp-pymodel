@@ -1015,13 +1015,13 @@ if __name__ == '__main__':
     import sys
     import traceback
 
-    codes = [('AND', 'Rn', 'Rn', 4, 2, 0),
-             ('MOV', '@Rn', 'Rn', 4, 2, 1)]
+    # codes = [('AND', 'Rn', 'Rn', 4, 2, 0),
+    #          ('MOV', '@Rn', 'Rn', 4, 2, 1)]
 
-    code = emit_micro(0, codes)
-    for x in code:
-        print(x)
-    exit(0)
+    # code = emit_micro(0, codes)
+    # for x in code:
+    #     print(x)
+    # exit(0)
 
     n = int(sys.argv[1])
     good = 0
@@ -1029,21 +1029,21 @@ if __name__ == '__main__':
     err = 0
 
     for codes in iter_reps(n):
-        # if codes[0][0] not in {'CALL'}:
+        # if codes[0][2] not in {'Rn'} or codes[0][1] not in {'Rn'} or codes[0][4] not in {2} or codes[0][3] not in {1}:
         #     continue
-        # print('-- {:s} --'.format(repr(codes)))
+        print('-- {:s} --'.format(repr(codes)))
         try:
             code = emit_micro(0, codes)
-            for instr_data in code:
-                print(repr(instr_data))
+            # for instr_data in code:
+            #     print(repr(instr_data))
             words = assem.assemble_symregion(code, 0x4400, {'HALT_FAIL':0x4000})
-            utils.printhex(words)
+            # utils.printhex(words)
         except ValueError as e:
             if str(e).startswith('condition'):
                 print('unsupported')
                 bad += 1
             elif str(e).startswith('conflict'):
-                traceback.print_exc()
+                print('conflict')
                 bad += 1
             else:
                 err += 1
