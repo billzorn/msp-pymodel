@@ -1,0 +1,3 @@
+# conda create -c defaults -c asmeurer --override-channels -n msp-pymodel python=3.4 --file requirements.txt
+
+z3
